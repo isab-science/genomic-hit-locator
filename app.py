@@ -56,6 +56,22 @@ EFFECT_ALIASES = (
     "score",
     "mean",
 )
+PVALUE_ALIASES = (
+    "pvalue",
+    "pValue",
+    "PValue",
+    "p_value",
+    "P_Value",
+    "p-value",
+    "P-value",
+    "p",
+    "p_value_log2",
+    "P_value_log2",
+    "p_value_raw",
+    "p_value_act",
+    "p_value_deltaNT",
+    "p_value_repro_log2",
+)
 CHROM_ALIASES = ("Chromosome", "chromosome", "Chrom", "Chr", "chrom")
 POSITION_ALIASES = ("Start_Position", "Start position", "StartPosition", "Start", "pos", "Position")
 
@@ -63,6 +79,13 @@ ANNOTATION_CANDIDATES = [
     os.getenv("GENOMIC_HIT_LOCATOR_ANNOTATION_PATH", "").strip(),
     "/home/aag/Neuropathology - Manuscripts/TrevisanWang2024/Data/ScreenResults/PrP_genes_and_NT_ordered_AguzziLab.xlsx",
 ]
+DEFAULT_SAMPLE_DIR = APP_ROOT / "sample-data"
+DEFAULT_ALL_GENES_SAMPLE = Path(
+    os.getenv("GENOMIC_HIT_LOCATOR_DEFAULT_ALL_GENES", str(DEFAULT_SAMPLE_DIR / "Primary_screen_filtered_results.xlsx")).strip()
+)
+DEFAULT_SECONDARY_SAMPLE = Path(
+    os.getenv("GENOMIC_HIT_LOCATOR_DEFAULT_SECONDARY", str(DEFAULT_SAMPLE_DIR / "Secondary screen.xlsx")).strip()
+)
 PLOT_CACHE_LIMIT = 24
 
 
@@ -162,6 +185,10 @@ def _read_tabular_upload(content: bytes, filename: str | None) -> pd.DataFrame:
     try:
         if lower_name.endswith((".xlsx", ".xls")):
             return pd.read_excel(io.BytesIO(content))
+        if lower_name.endswith(".csv"):
+            return pd.read_csv(io.BytesIO(content))
+        if lower_name.endswith(".tsv"):
+            return pd.read_csv(io.BytesIO(content), sep="\t")
         sample = content[:4096].decode("utf-8", errors="replace")
         if "\t" in sample and sample.count("\t") >= sample.count(","):
             return pd.read_csv(io.BytesIO(content), sep="\t")
@@ -173,6 +200,21 @@ def _read_tabular_upload(content: bytes, filename: str | None) -> pd.DataFrame:
             status_code=400,
             detail=f"Could not read '{filename or 'uploaded file'}' as CSV/TSV/XLSX: {exc}",
         ) from exc
+
+
+def _read_tabular_path(path: Path) -> pd.DataFrame:
+    try:
+        return _read_tabular_upload(path.read_bytes(), path.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=f"Default sample file not found: {path}") from exc
+
+
+def _sample_status(path: Path) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "filename": path.name,
+        "available": path.exists(),
+    }
 
 
 def _read_annotation_workbook(path: Path) -> tuple[pd.DataFrame, str]:
@@ -242,10 +284,22 @@ def load_annotation_reference() -> tuple[pd.DataFrame, str]:
 def _prepare_all_gene_table(raw: pd.DataFrame, scale_mode: str) -> pd.DataFrame:
     gene_col = _resolve_column(list(raw.columns), GENE_ALIASES, "gene")
     effect_col = _resolve_column(list(raw.columns), EFFECT_ALIASES, "effect size (for example log2ratio)")
+    pvalue_col = None
+    try:
+        pvalue_col = _resolve_column(list(raw.columns), PVALUE_ALIASES, "p-value")
+    except HTTPException:
+        pvalue_col = None
 
-    data = raw.rename(columns={gene_col: "gene", effect_col: "effect_raw"}).copy()
+    rename_map = {gene_col: "gene", effect_col: "effect_raw"}
+    if pvalue_col:
+        rename_map[pvalue_col] = "pvalue_raw"
+    data = raw.rename(columns=rename_map).copy()
     data["gene"] = data["gene"].map(_normalize_gene)
     data["effect_raw"] = pd.to_numeric(data["effect_raw"], errors="coerce")
+    if "pvalue_raw" in data.columns:
+        data["pvalue_raw"] = pd.to_numeric(data["pvalue_raw"], errors="coerce")
+    else:
+        data["pvalue_raw"] = pd.NA
     data = data[(data["gene"] != "") & data["effect_raw"].notna()].copy()
     data = data.sort_values(["gene"]).drop_duplicates("gene", keep="first").reset_index(drop=True)
     if data.empty:
@@ -260,29 +314,48 @@ def _prepare_all_gene_table(raw: pd.DataFrame, scale_mode: str) -> pd.DataFrame:
     return data
 
 
-def _parse_subset_genes(raw: pd.DataFrame | None, text_input: str | None) -> tuple[set[str], list[str]]:
-    selected: set[str] = set()
-    source_labels: list[str] = []
+def _parse_uploaded_gene_list(raw: pd.DataFrame | None, label: str) -> set[str]:
+    if raw is None or raw.empty:
+        return set()
+    gene_col = _resolve_column(list(raw.columns), GENE_ALIASES, f"{label} gene")
+    genes = {_normalize_gene(value) for value in raw[gene_col].tolist()}
+    return {gene for gene in genes if gene}
 
-    if raw is not None and not raw.empty:
-        gene_col = _resolve_column(list(raw.columns), GENE_ALIASES, "subset gene")
-        subset_series = raw[gene_col].map(_normalize_gene)
-        subset_genes = {gene for gene in subset_series.tolist() if gene}
-        if subset_genes:
-            selected.update(subset_genes)
-            source_labels.append("subset file")
 
-    if text_input:
-        manual = {
-            _normalize_gene(token)
-            for token in text_input.replace("\n", ",").replace(";", ",").split(",")
-            if _normalize_gene(token)
-        }
-        if manual:
-            selected.update(manual)
-            source_labels.append("typed list")
+def _derive_primary_hits(
+    data: pd.DataFrame,
+    selection_mode: str,
+    effect_threshold: float | None,
+    pvalue_threshold: float | None,
+) -> set[str]:
+    mode = (selection_mode or "effect_only").strip().lower()
+    if mode not in {"effect_only", "pvalue_only", "combo"}:
+        raise HTTPException(status_code=400, detail="Primary hit mode must be effect_only, pvalue_only, or combo.")
 
-    return selected, source_labels
+    effect_cutoff = abs(float(effect_threshold)) if effect_threshold is not None else 0.0
+    pvalue_cutoff = float(pvalue_threshold) if pvalue_threshold is not None else 0.05
+
+    effect_mask = data["effect_raw"].abs() >= effect_cutoff
+    pvalue_series = pd.to_numeric(data["pvalue_raw"], errors="coerce")
+    pvalue_mask = pvalue_series.notna() & (pvalue_series <= pvalue_cutoff)
+
+    if mode == "effect_only":
+        selected = data.loc[effect_mask, "gene"]
+    elif mode == "pvalue_only":
+        if pvalue_series.notna().sum() == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Primary hits cannot be derived from p-values because the genome-wide file has no detected p-value column.",
+            )
+        selected = data.loc[pvalue_mask, "gene"]
+    else:
+        if pvalue_series.notna().sum() == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Primary hits cannot be derived with combo mode because the genome-wide file has no detected p-value column.",
+            )
+        selected = data.loc[effect_mask & pvalue_mask, "gene"]
+    return {gene for gene in selected.tolist() if _normalize_gene(gene)}
 
 
 def _build_genome_axis(data: pd.DataFrame) -> tuple[pd.DataFrame, list[float], list[str], list[dict[str, Any]]]:
@@ -324,18 +397,190 @@ def _hex_with_alpha(color: str, fallback: str) -> str:
     return value if value.startswith("#") and len(value) in {4, 7} else fallback
 
 
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    value = _hex_with_alpha(color, "#d9dde3")
+    if len(value) == 4:
+        value = "#" + "".join(ch * 2 for ch in value[1:])
+    return tuple(int(value[index : index + 2], 16) for index in (1, 3, 5))
+
+
+def _blend_rgb(base: tuple[int, int, int], target: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
+    clipped = max(0.0, min(1.0, float(amount)))
+    return tuple(int(round(base[channel] + (target[channel] - base[channel]) * clipped)) for channel in range(3))
+
+
+def _rgba_string(rgb: tuple[int, int, int], alpha: float = 1.0) -> str:
+    clipped = max(0.0, min(1.0, float(alpha)))
+    return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {clipped:.3f})"
+
+
+def _format_pvalue_tick(value: float) -> str:
+    if value >= 0.1:
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+    if value >= 0.001:
+        return f"{value:.3f}".rstrip("0").rstrip(".")
+    return f"{value:.1e}"
+
+
+def _compute_pvalue_scale_context(data: pd.DataFrame) -> dict[str, Any] | None:
+    pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
+    valid_mask = pvalues.notna() & (pvalues > 0)
+    if valid_mask.sum() == 0:
+        return None
+
+    clipped = pvalues.clip(lower=1e-300, upper=1.0)
+    scores = clipped.map(lambda value: -math.log10(float(value)))  # noqa: C417
+    score_min = float(scores[valid_mask].min())
+    score_max = float(scores[valid_mask].max())
+    score_span = max(score_max - score_min, 1e-9)
+    tickvals = [0.0, 0.25, 0.5, 0.75, 1.0]
+    ticktext = [_format_pvalue_tick(10 ** (-(score_min + (value * score_span)))) for value in tickvals]
+    return {
+        "score_min": score_min,
+        "score_max": score_max,
+        "score_span": score_span,
+        "tickvals": tickvals,
+        "ticktext": ticktext,
+        "pvalue_min": float(clipped[valid_mask].min()),
+        "pvalue_max": float(clipped[valid_mask].max()),
+    }
+
+
+def _build_pvalue_marker_config(
+    data: pd.DataFrame,
+    base_color: str,
+    colorbar_title: str,
+    colorbar_x: float,
+    marker_size: float,
+    marker_opacity: float,
+    scale_context: dict[str, Any] | None = None,
+    line: dict[str, Any] | None = None,
+    symbol: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
+    valid_mask = pvalues.notna() & (pvalues > 0)
+    if valid_mask.sum() == 0:
+        marker: dict[str, Any] = {"color": base_color, "size": marker_size, "opacity": marker_opacity}
+        if line:
+            marker["line"] = line
+        if symbol:
+            marker["symbol"] = symbol
+        return (marker, None)
+
+    clipped = pvalues.clip(lower=1e-300, upper=1.0)
+    scores = clipped.map(lambda value: -math.log10(float(value)))  # noqa: C417
+    observed_score_min = float(scores[valid_mask].min())
+    observed_score_max = float(scores[valid_mask].max())
+    if scale_context is None:
+        scale_context = _compute_pvalue_scale_context(data)
+    assert scale_context is not None
+    score_min = float(scale_context["score_min"])
+    score_max = float(scale_context["score_max"])
+    score_span = float(scale_context["score_span"])
+    norm = ((scores - score_min) / score_span).fillna(0.0).clip(lower=0.0, upper=1.0)
+
+    base_rgb = _hex_to_rgb(base_color)
+    pale_rgb = _blend_rgb(base_rgb, (255, 255, 255), 0.94)
+    mid_rgb = _blend_rgb(base_rgb, (255, 255, 255), 0.72)
+    colorscale = [
+        [0.0, _rgba_string(pale_rgb, 0.12)],
+        [0.25, _rgba_string(mid_rgb, 0.28)],
+        [0.6, _rgba_string(base_rgb, 0.6)],
+        [1.0, _rgba_string(base_rgb, 1.0)],
+    ]
+
+    visible_colors = []
+    for raw_value in norm.tolist():
+        intensity = max(0.0, min(1.0, float(raw_value)))
+        rgb = _blend_rgb((255, 255, 255), base_rgb, 0.06 + (0.94 * intensity))
+        alpha = 0.05 + (0.95 * intensity)
+        visible_colors.append(_rgba_string(rgb, alpha))
+
+    tickvals = list(scale_context["tickvals"])
+    ticktext = list(scale_context["ticktext"])
+
+    marker = {
+        "color": visible_colors,
+        "size": marker_size,
+        "opacity": marker_opacity,
+    }
+    if line:
+        marker["line"] = line
+    if symbol:
+        marker["symbol"] = symbol
+    scale_summary = {
+        "enabled": True,
+        "pvalue_min": float(clipped[valid_mask].min()),
+        "pvalue_max": float(clipped[valid_mask].max()),
+        "reference_pvalue_min": float(10 ** (-score_max)),
+        "reference_pvalue_max": float(10 ** (-score_min)),
+        "observed_score_min": observed_score_min,
+        "observed_score_max": observed_score_max,
+        "score_min": score_min,
+        "score_max": score_max,
+        "color_values": norm.tolist(),
+        "colorscale": colorscale,
+        "colorbar": {
+            "title": {"text": colorbar_title, "side": "right"},
+            "tickvals": tickvals,
+            "ticktext": ticktext,
+            "thickness": 18,
+            "len": 0.76,
+            "y": 0.5,
+            "yanchor": "middle",
+            "x": colorbar_x,
+            "xanchor": "left",
+            "outlinewidth": 0.5,
+            "outlinecolor": "rgba(20, 50, 76, 0.18)",
+        },
+        "tickvals": tickvals,
+        "ticktext": ticktext,
+        "title": colorbar_title,
+    }
+    return marker, scale_summary
+
+
+def _add_colorbar_trace(fig: go.Figure, scale_summary: dict[str, Any], trace_name: str) -> None:
+    fig.add_trace(
+        go.Scatter(
+            x=[None, None],
+            y=[None, None],
+            mode="markers",
+            name=f"{trace_name} colorbar",
+            marker={
+                "size": 0.1,
+                "color": [0.0, 1.0],
+                "cmin": 0,
+                "cmax": 1,
+                "colorscale": scale_summary["colorscale"],
+                "showscale": True,
+                "colorbar": scale_summary["colorbar"],
+            },
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+
+
 def _build_plot(
     data: pd.DataFrame,
-    selected_genes: set[str],
-    all_color: str,
-    hit_color: str,
-) -> go.Figure:
+    show_genomewide: bool,
+    primary_genes: set[str],
+    secondary_genes: set[str],
+    genomewide_color: str,
+    primary_color: str,
+    secondary_color: str,
+) -> tuple[go.Figure, dict[str, Any]]:
     plot_df, tick_vals, tick_labels, chromosome_bounds = _build_genome_axis(data)
-    background_color = _hex_with_alpha(all_color, "#d9dde3")
-    accent_color = _hex_with_alpha(hit_color, "#d93f6a")
+    background_color = _hex_with_alpha(genomewide_color, "#d9dde3")
+    primary_accent_color = _hex_with_alpha(primary_color, "#d93f6a")
+    secondary_accent_color = _hex_with_alpha(secondary_color, "#f59e0b")
+    global_scale_context = _compute_pvalue_scale_context(plot_df)
 
-    hit_df = plot_df[plot_df["gene"].isin(selected_genes)].copy()
+    primary_df = plot_df[plot_df["gene"].isin(primary_genes)].copy()
+    secondary_df = plot_df[plot_df["gene"].isin(secondary_genes)].copy()
     fig = go.Figure()
+    scale_summaries: dict[str, Any] = {}
 
     for index, bounds in enumerate(chromosome_bounds):
         if index % 2 == 0:
@@ -348,51 +593,111 @@ def _build_plot(
                 layer="below",
             )
 
-    fig.add_trace(
-        go.Scattergl(
-            x=plot_df["genome_x"],
-            y=plot_df["effect_plot"],
-            mode="markers",
-            name="All tested genes",
-            marker={"color": background_color, "size": 6, "opacity": 0.35},
-            customdata=plot_df[["gene", "chromosome", "position", "effect_raw"]].values,
-            hovertemplate=(
-                "Gene: %{customdata[0]}<br>"
-                "Chr %{customdata[1]}:%{customdata[2]:,.0f}<br>"
-                "Raw effect: %{customdata[3]:.4f}<br>"
-                "Plotted value: %{y:.4f}<extra></extra>"
-            ),
+    if show_genomewide:
+        genomewide_marker, pvalue_scale = _build_pvalue_marker_config(
+            plot_df,
+            background_color,
+            "Genome-wide p",
+            1.02,
+            6,
+            1.0,
+            scale_context=global_scale_context,
         )
-    )
-
-    if not hit_df.empty:
+        if pvalue_scale:
+            scale_summaries["genomewide"] = pvalue_scale
         fig.add_trace(
             go.Scattergl(
-                x=hit_df["genome_x"],
-                y=hit_df["effect_plot"],
+                x=plot_df["genome_x"],
+                y=plot_df["effect_plot"],
                 mode="markers",
-                name="Highlighted hits",
-                marker={
-                    "color": accent_color,
-                    "size": 9,
-                    "opacity": 0.95,
-                    "line": {"color": "#ffffff", "width": 1},
-                },
-                text=hit_df["gene"],
-                customdata=hit_df[["gene", "chromosome", "position", "effect_raw"]].values,
+                name="Genome-wide results",
+                marker=genomewide_marker,
+                customdata=plot_df[["gene", "chromosome", "position", "effect_raw", "pvalue_raw"]].values,
                 hovertemplate=(
-                    "Hit: %{customdata[0]}<br>"
+                    "Gene: %{customdata[0]}<br>"
                     "Chr %{customdata[1]}:%{customdata[2]:,.0f}<br>"
                     "Raw effect: %{customdata[3]:.4f}<br>"
+                    "P-value: %{customdata[4]:.4g}<br>"
                     "Plotted value: %{y:.4f}<extra></extra>"
                 ),
             )
         )
+        if pvalue_scale:
+            _add_colorbar_trace(fig, pvalue_scale, "Genome-wide results")
+
+    if not primary_df.empty:
+        primary_marker, primary_scale = _build_pvalue_marker_config(
+            primary_df,
+            primary_accent_color,
+            "Primary p",
+            1.08,
+            9,
+            0.96,
+            scale_context=global_scale_context,
+            line={"color": "#ffffff", "width": 1},
+        )
+        if primary_scale:
+            scale_summaries["primary"] = primary_scale
+        fig.add_trace(
+            go.Scattergl(
+                x=primary_df["genome_x"],
+                y=primary_df["effect_plot"],
+                mode="markers",
+                name="Primary hits",
+                marker=primary_marker,
+                text=primary_df["gene"],
+                customdata=primary_df[["gene", "chromosome", "position", "effect_raw", "pvalue_raw"]].values,
+                hovertemplate=(
+                    "Primary hit: %{customdata[0]}<br>"
+                    "Chr %{customdata[1]}:%{customdata[2]:,.0f}<br>"
+                    "Raw effect: %{customdata[3]:.4f}<br>"
+                    "P-value: %{customdata[4]:.4g}<br>"
+                    "Plotted value: %{y:.4f}<extra></extra>"
+                ),
+            )
+        )
+        if primary_scale:
+            _add_colorbar_trace(fig, primary_scale, "Primary hits")
+
+    if not secondary_df.empty:
+        secondary_marker, secondary_scale = _build_pvalue_marker_config(
+            secondary_df,
+            secondary_accent_color,
+            "Secondary p",
+            1.14,
+            10,
+            0.98,
+            scale_context=global_scale_context,
+            line={"color": "#101828", "width": 1.1},
+            symbol="diamond",
+        )
+        if secondary_scale:
+            scale_summaries["secondary"] = secondary_scale
+        fig.add_trace(
+            go.Scattergl(
+                x=secondary_df["genome_x"],
+                y=secondary_df["effect_plot"],
+                mode="markers",
+                name="Secondary hits",
+                marker=secondary_marker,
+                text=secondary_df["gene"],
+                customdata=secondary_df[["gene", "chromosome", "position", "effect_raw", "pvalue_raw"]].values,
+                hovertemplate=(
+                    "Secondary hit: %{customdata[0]}<br>"
+                    "Chr %{customdata[1]}:%{customdata[2]:,.0f}<br>"
+                    "Raw effect: %{customdata[3]:.4f}<br>"
+                    "P-value: %{customdata[4]:.4g}<br>"
+                    "Plotted value: %{y:.4f}<extra></extra>"
+                ),
+            )
+        )
+        if secondary_scale:
+            _add_colorbar_trace(fig, secondary_scale, "Secondary hits")
 
     fig.update_layout(
         template="plotly_white",
         height=760,
-        margin={"l": 72, "r": 26, "t": 44, "b": 90},
+        margin={"l": 72, "r": 220 if scale_summaries else 26, "t": 44, "b": 90},
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
         legend={"orientation": "h", "x": 0.01, "y": 1.08},
@@ -410,7 +715,7 @@ def _build_plot(
             "zerolinecolor": "rgba(15, 23, 42, 0.18)",
         },
     )
-    return fig
+    return fig, scale_summaries
 
 
 def _store_plot(fig: go.Figure, summary: dict[str, Any]) -> str:
@@ -454,6 +759,8 @@ async def index(request: Request) -> HTMLResponse:
             "public_base_url": PUBLIC_BASE_URL,
             "readme_url": "/readme",
             "annotation_status": annotation_status,
+            "default_all_genes_sample": _sample_status(DEFAULT_ALL_GENES_SAMPLE),
+            "default_secondary_sample": _sample_status(DEFAULT_SECONDARY_SAMPLE),
         },
     )
 
@@ -483,28 +790,49 @@ async def readme(request: Request) -> HTMLResponse:
 
 @app.post("/api/plot")
 async def api_plot(
-    all_genes_file: UploadFile = File(...),
-    subset_file: UploadFile | None = File(default=None),
-    subset_genes_text: str = Form(default=""),
+    all_genes_file: UploadFile | None = File(default=None),
+    secondary_hits_file: UploadFile | None = File(default=None),
     scale_mode: str = Form(default="linear"),
-    all_genes_color: str = Form(default="#d9dde3"),
-    hit_genes_color: str = Form(default="#d93f6a"),
+    genomewide_color: str = Form(default="#d9dde3"),
+    primary_color: str = Form(default="#d93f6a"),
+    secondary_color: str = Form(default="#f59e0b"),
+    show_genomewide: str = Form(default="show"),
+    primary_mode: str = Form(default="effect_only"),
+    primary_effect_threshold: float = Form(default=1.0),
+    primary_pvalue_threshold: float = Form(default=0.05),
 ) -> JSONResponse:
     annotation, annotation_source = load_annotation_reference()
 
-    all_gene_bytes = await all_genes_file.read()
-    if not all_gene_bytes:
-        raise HTTPException(status_code=400, detail="The all-genes file is empty.")
-    all_raw = _read_tabular_upload(all_gene_bytes, all_genes_file.filename)
+    if all_genes_file is not None and all_genes_file.filename:
+        all_gene_bytes = await all_genes_file.read()
+        if not all_gene_bytes:
+            raise HTTPException(status_code=400, detail="The all-genes file is empty.")
+        all_raw = _read_tabular_upload(all_gene_bytes, all_genes_file.filename)
+        all_genes_source = all_genes_file.filename
+        using_default_all_genes = False
+    else:
+        if not DEFAULT_ALL_GENES_SAMPLE.exists():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No genome-wide results file was uploaded, and the default sample dataset is not installed yet. "
+                    f"Expected: {DEFAULT_ALL_GENES_SAMPLE}"
+                ),
+            )
+        all_raw = _read_tabular_path(DEFAULT_ALL_GENES_SAMPLE)
+        all_genes_source = DEFAULT_ALL_GENES_SAMPLE.name
+        using_default_all_genes = True
     prepared = _prepare_all_gene_table(all_raw, "log2" if scale_mode == "log2" else "linear")
 
-    subset_raw: pd.DataFrame | None = None
-    if subset_file is not None and subset_file.filename:
-        subset_bytes = await subset_file.read()
+    secondary_raw: pd.DataFrame | None = None
+    using_default_secondary = False
+    if secondary_hits_file is not None and secondary_hits_file.filename:
+        subset_bytes = await secondary_hits_file.read()
         if subset_bytes:
-            subset_raw = _read_tabular_upload(subset_bytes, subset_file.filename)
-
-    selected_genes, subset_sources = _parse_subset_genes(subset_raw, subset_genes_text)
+            secondary_raw = _read_tabular_upload(subset_bytes, secondary_hits_file.filename)
+    elif DEFAULT_SECONDARY_SAMPLE.exists():
+        secondary_raw = _read_tabular_path(DEFAULT_SECONDARY_SAMPLE)
+        using_default_secondary = True
 
     merged = prepared.merge(annotation, on="gene", how="left")
     merged = merged.dropna(subset=["chromosome", "position"]).copy()
@@ -514,28 +842,56 @@ async def api_plot(
             detail="None of the genes from the all-genes file could be matched to the local chromosome annotation reference.",
         )
 
-    missing_annotation = int(prepared.shape[0] - merged.shape[0])
-    selected_in_merged = {gene for gene in selected_genes if gene in set(merged["gene"])}
-    missing_subset = sorted(selected_genes - selected_in_merged)
+    primary_genes = _derive_primary_hits(
+        prepared,
+        selection_mode=primary_mode,
+        effect_threshold=primary_effect_threshold,
+        pvalue_threshold=primary_pvalue_threshold,
+    )
+    secondary_genes = _parse_uploaded_gene_list(secondary_raw, "secondary hit")
 
-    figure = _build_plot(
+    missing_annotation = int(prepared.shape[0] - merged.shape[0])
+    merged_gene_set = set(merged["gene"])
+    primary_in_merged = {gene for gene in primary_genes if gene in merged_gene_set}
+    secondary_in_merged = {gene for gene in secondary_genes if gene in merged_gene_set}
+    missing_secondary = sorted(secondary_genes - secondary_in_merged)
+
+    figure, pvalue_scale = _build_plot(
         data=merged,
-        selected_genes=selected_in_merged,
-        all_color=all_genes_color,
-        hit_color=hit_genes_color,
+        show_genomewide=(show_genomewide or "show").strip().lower() != "hide",
+        primary_genes=primary_in_merged,
+        secondary_genes=secondary_in_merged,
+        genomewide_color=genomewide_color,
+        primary_color=primary_color,
+        secondary_color=secondary_color,
     )
     figure_payload = json.loads(figure.to_json())
     summary = {
         "all_genes_total": int(prepared.shape[0]),
         "annotated_genes_total": int(merged.shape[0]),
         "missing_annotation_total": missing_annotation,
-        "selected_hits_total": len(selected_in_merged),
-        "missing_selected_total": len(missing_subset),
-        "missing_selected_preview": missing_subset[:20],
-        "subset_sources": subset_sources,
+        "primary_hits_total": len(primary_in_merged),
+        "secondary_hits_total": len(secondary_in_merged),
+        "missing_secondary_total": len(missing_secondary),
+        "missing_secondary_preview": missing_secondary[:20],
         "annotation_source": annotation_source,
         "scale_mode": "log2" if scale_mode == "log2" else "linear",
         "y_axis_label": str(merged["y_axis_label"].iloc[0]),
+        "primary_mode": primary_mode,
+        "primary_effect_threshold": primary_effect_threshold,
+        "primary_pvalue_threshold": primary_pvalue_threshold,
+        "show_genomewide": (show_genomewide or "show").strip().lower() != "hide",
+        "pvalue_scale": pvalue_scale,
+        "data_source": {
+            "all_genes": all_genes_source,
+            "secondary_hits": (
+                secondary_hits_file.filename
+                if secondary_hits_file is not None and secondary_hits_file.filename
+                else (DEFAULT_SECONDARY_SAMPLE.name if using_default_secondary else None)
+            ),
+            "using_default_all_genes": using_default_all_genes,
+            "using_default_secondary": using_default_secondary,
+        },
     }
     plot_id = _store_plot(figure, summary)
     return JSONResponse(

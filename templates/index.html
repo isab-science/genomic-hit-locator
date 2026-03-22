@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=20260322-fullwidth-1">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
@@ -12,7 +12,7 @@
     <section class="hero">
       <div class="hero-copy">
         <p class="eyebrow">Genome-Wide Hit Context</p>
-        <h1>{{ title }}</h1>
+        <h1>Genomic Hit Locator (Appenzeller plot)</h1>
         <p class="subtitle">{{ subtitle }}</p>
         <div class="hero-links">
           <a class="text-link" href="{{ readme_url }}">Read the guide</a>
@@ -36,67 +36,119 @@
       <form id="locator-form" class="panel controls" enctype="multipart/form-data">
         <div class="panel-heading">
           <h2>Input</h2>
-          <p>Upload a screen-wide gene/effect table, then highlight hits either from a second file or by pasting genes.</p>
+          <p>Upload the genome-wide results, derive the primary hits from thresholds, and overlay an uploaded secondary hit list. If you leave the pickers empty, the app can fall back to built-in sample files when they are installed on this server.</p>
         </div>
 
-        <label class="field">
-          <span>All tested genes file</span>
-          <input type="file" name="all_genes_file" accept=".csv,.tsv,.txt,.xlsx,.xls" required>
-          <small>Needs gene and effect columns. Common names like <code>Gene_symbol</code> and <code>log2ratio</code> are detected automatically.</small>
-        </label>
+        <div class="input-card-grid">
+          <section class="input-card">
+            <h3>Genome-wide results</h3>
+            <label class="field">
+              <span>Results file</span>
+              <input type="file" name="all_genes_file" accept=".csv,.tsv,.txt,.xlsx,.xls">
+              <small>Needs gene, effect-size, and optionally p-value columns. Common names like <code>Gene_symbol</code>, <code>All_targeted_genes</code>, <code>log2ratio</code>, and <code>pValue</code> are detected automatically.</small>
+            </label>
+            <p class="sample-note {% if default_all_genes_sample.available %}ok{% else %}muted{% endif %}">
+              {% if default_all_genes_sample.available %}
+              Default sample installed: <strong>{{ default_all_genes_sample.filename }}</strong>
+              {% else %}
+              No default genome-wide sample installed yet.
+              {% endif %}
+            </p>
 
-        <label class="field">
-          <span>Subset hits file</span>
-          <input type="file" name="subset_file" accept=".csv,.tsv,.txt,.xlsx,.xls">
-          <small>Optional. Needs a gene column only.</small>
-        </label>
+            <label class="field">
+              <span>Y-axis transform</span>
+              <select name="scale_mode">
+                <option value="linear">Linear / as supplied log2ratio</option>
+                <option value="log2">Signed log2(|log2ratio| + 1)</option>
+              </select>
+            </label>
 
-        <label class="field">
-          <span>Or paste genes</span>
-          <textarea name="subset_genes_text" rows="5" placeholder="PRNP, APP, SNCA"></textarea>
-          <small>Comma, newline, or semicolon separated. The pasted list is merged with any uploaded hit file.</small>
-        </label>
+            <fieldset class="field radio-group">
+              <legend>Show on plot</legend>
+              <label><input type="radio" name="show_genomewide" value="show" checked> Show</label>
+              <label><input type="radio" name="show_genomewide" value="hide"> Hide</label>
+            </fieldset>
 
-        <div class="field-grid">
-          <label class="field">
-            <span>Y-axis transform</span>
-            <select name="scale_mode">
-              <option value="linear">Linear / as supplied log2ratio</option>
-              <option value="log2">Signed log2(|log2ratio| + 1)</option>
-            </select>
-          </label>
+            <label class="field color-field">
+              <span>Genome-wide color</span>
+              <input type="color" name="genomewide_color" value="#d9dde3">
+            </label>
+          </section>
 
-          <label class="field color-field">
-            <span>All genes color</span>
-            <input type="color" name="all_genes_color" value="#d9dde3">
-          </label>
+          <section class="input-card">
+            <h3>Primary hits</h3>
+            <label class="field">
+              <span>Selection method</span>
+              <select name="primary_mode">
+                <option value="effect_only">Largest |effect| (balanced +/-)</option>
+                <option value="pvalue_only">Smallest p-value</option>
+                <option value="combo" selected>Strongest combo |effect| * -log10(p)</option>
+              </select>
+            </label>
 
-          <label class="field color-field">
-            <span>Hits color</span>
-            <input type="color" name="hit_genes_color" value="#d93f6a">
-          </label>
+            <label class="field">
+              <span>Minimum |effect size|</span>
+              <input type="number" name="primary_effect_threshold" value="0.2" step="0.1">
+            </label>
+
+            <label class="field">
+              <span>Maximum p-value</span>
+              <input type="number" name="primary_pvalue_threshold" value="0.05" step="0.001" min="0">
+            </label>
+
+            <label class="field color-field">
+              <span>Primary-hit color</span>
+              <input type="color" name="primary_color" value="#6a3fd9">
+            </label>
+          </section>
+
+          <section class="input-card">
+            <h3>Secondary hits</h3>
+            <label class="field">
+              <span>Secondary hitlist file</span>
+              <input type="file" name="secondary_hits_file" accept=".csv,.tsv,.txt,.xlsx,.xls">
+              <small>Upload a gene list for the second highlighted layer.</small>
+            </label>
+            <p class="sample-note {% if default_secondary_sample.available %}ok{% else %}muted{% endif %}">
+              {% if default_secondary_sample.available %}
+              Default sample installed: <strong>{{ default_secondary_sample.filename }}</strong>
+              {% else %}
+              No default secondary-hit sample installed yet.
+              {% endif %}
+            </p>
+
+            <label class="field color-field">
+              <span>Secondary-hit color</span>
+              <input type="color" name="secondary_color" value="#f59e0b">
+            </label>
+          </section>
         </div>
 
         <div class="actions">
-          <button class="button primary" type="submit">Generate plot</button>
+          <button id="generate-plot-button" class="button primary" type="submit">Generate Appenzeller Plot</button>
           <button class="button quiet" type="reset">Reset</button>
         </div>
       </form>
 
       <section class="panel results">
         <div class="panel-heading">
-          <h2>Chromosome skyline</h2>
+          <h2>Appenzeller plot (bidirectional effect size vs genomic location)</h2>
           <p>The x-axis spans genomic position across chromosomes, and highlighted hits are overlaid on the full tested set.</p>
         </div>
-
-        <div id="status-box" class="status-box">Choose your files and generate the first plot.</div>
-        <div id="summary-grid" class="summary-grid" hidden></div>
 
         <div id="plot-controls" class="plot-controls" hidden>
           <div class="control-row">
             <label class="field inline-grow">
               <span>Label genes (comma separated)</span>
               <input id="label-genes" type="text" placeholder="PRNP, APP, SNCA">
+            </label>
+            <label class="field inline-compact">
+              <span>Label layer</span>
+              <select id="label-layer">
+                <option value="both" selected>Primary + secondary</option>
+                <option value="primary">Primary hits only</option>
+                <option value="secondary">Secondary hits only</option>
+              </select>
             </label>
             <label class="field inline-compact">
               <span>Top +/- strongest</span>
@@ -131,6 +183,9 @@
         <div id="plot-frame" class="plot-frame">
           <div id="plot"></div>
         </div>
+
+        <div id="status-box" class="status-box status-box-below">Choose your files and generate the first plot.</div>
+        <div id="summary-grid" class="summary-grid" hidden></div>
       </section>
     </section>
   </main>
@@ -141,9 +196,11 @@
     const summaryGrid = document.getElementById("summary-grid");
     const plotControls = document.getElementById("plot-controls");
     const plotNode = document.getElementById("plot");
+    const generatePlotButton = document.getElementById("generate-plot-button");
     const exportPreset = document.getElementById("export-preset");
     const downloadSvg = document.getElementById("download-svg");
     const labelGenesInput = document.getElementById("label-genes");
+    const labelLayerSelect = document.getElementById("label-layer");
     const labelTopNSelect = document.getElementById("label-top-n");
     const labelsApplyButton = document.getElementById("labels-apply");
     const labelsClearButton = document.getElementById("labels-clear");
@@ -152,38 +209,58 @@
     let currentPlotId = "";
     let currentFigure = null;
     const LABEL_TRACE_NAME = "Selected labels";
+    const GENERATE_BUTTON_IDLE = "Generate Appenzeller Plot";
+    const GENERATE_BUTTON_WORKING = "Working...";
+    const GENERATE_BUTTON_DONE = "Plot done, see below";
 
     function setStatus(message, kind = "info") {
       statusBox.textContent = message;
       statusBox.dataset.kind = kind;
     }
 
+    function setGenerateButtonState(label, disabled) {
+      generatePlotButton.textContent = label;
+      generatePlotButton.disabled = Boolean(disabled);
+    }
+
+    function nextFrame() {
+      return new Promise((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    }
+
     function getTraceRows() {
       if (!currentFigure || !currentFigure.data || !currentFigure.data.length) {
         return [];
       }
-      const baseTrace = currentFigure.data[0];
-      const xVals = baseTrace.x || [];
-      const yVals = baseTrace.y || [];
-      const custom = baseTrace.customdata || [];
       const rows = [];
-      const count = Math.min(xVals.length, yVals.length, custom.length);
-      for (let index = 0; index < count; index += 1) {
-        const item = custom[index] || [];
-        const gene = (item[0] || "").toString().trim();
-        if (!gene) continue;
-        const x = Number(xVals[index]);
-        const y = Number(yVals[index]);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-        rows.push({
-          gene,
-          key: gene.toUpperCase(),
-          x,
-          y,
-          chromosome: (item[1] || "").toString(),
-          position: item[2],
-          rawEffect: Number(item[3]),
-        });
+      const chosenLayer = labelLayerSelect.value || "both";
+      for (const trace of currentFigure.data) {
+        if (!trace || trace.name === LABEL_TRACE_NAME) continue;
+        if (chosenLayer === "primary" && trace.name !== "Primary hits") continue;
+        if (chosenLayer === "secondary" && trace.name !== "Secondary hits") continue;
+        if (chosenLayer === "both" && !["Primary hits", "Secondary hits"].includes(trace.name)) continue;
+        const xVals = trace.x || [];
+        const yVals = trace.y || [];
+        const custom = trace.customdata || [];
+        const count = Math.min(xVals.length, yVals.length, custom.length);
+        for (let index = 0; index < count; index += 1) {
+          const item = custom[index] || [];
+          const gene = (item[0] || "").toString().trim();
+          if (!gene) continue;
+          const x = Number(xVals[index]);
+          const y = Number(yVals[index]);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+          rows.push({
+            gene,
+            key: gene.toUpperCase(),
+            x,
+            y,
+            chromosome: (item[1] || "").toString(),
+            position: item[2],
+            rawEffect: Number(item[3]),
+          });
+        }
       }
       return rows;
     }
@@ -221,17 +298,12 @@
       }
       await Plotly.addTraces(plotNode, {
         type: "scattergl",
-        mode: "markers+text",
+        mode: "text",
         name: LABEL_TRACE_NAME,
         x: [],
         y: [],
         text: [],
         textposition: "top center",
-        marker: {
-          color: "#e3342f",
-          size: 10,
-          line: { color: "#101828", width: 1.4 },
-        },
         textfont: {
           color: "#101828",
           size: 13,
@@ -302,10 +374,11 @@
 
     function renderSummary(summary) {
       const cards = [
-        ["All tested genes", summary.all_genes_total],
+        ["Genome-wide genes", summary.all_genes_total],
         ["Annotated genes", summary.annotated_genes_total],
         ["Unannotated genes", summary.missing_annotation_total],
-        ["Highlighted hits", summary.selected_hits_total],
+        ["Primary hits", summary.primary_hits_total],
+        ["Secondary hits", summary.secondary_hits_total],
       ];
 
       summaryGrid.innerHTML = "";
@@ -316,11 +389,11 @@
         summaryGrid.appendChild(card);
       }
 
-      if (summary.missing_selected_total > 0) {
+      if (summary.missing_secondary_total > 0) {
         const card = document.createElement("article");
         card.className = "summary-card warning";
-        const preview = (summary.missing_selected_preview || []).join(", ");
-        card.innerHTML = `<span>Selected genes missing from tested set</span><strong>${summary.missing_selected_total.toLocaleString()}</strong><small>${preview}</small>`;
+        const preview = (summary.missing_secondary_preview || []).join(", ");
+        card.innerHTML = `<span>Secondary hits missing from tested set</span><strong>${summary.missing_secondary_total.toLocaleString()}</strong><small>${preview}</small>`;
         summaryGrid.appendChild(card);
       }
 
@@ -329,6 +402,8 @@
 
     async function handleSubmit(event) {
       event.preventDefault();
+      setGenerateButtonState(GENERATE_BUTTON_WORKING, true);
+      await nextFrame();
       setStatus("Building the chromosome skyline...", "busy");
       plotControls.hidden = true;
       summaryGrid.hidden = true;
@@ -356,19 +431,18 @@
 
         renderSummary(payload.summary);
 
-        const subsetSources = payload.summary.subset_sources && payload.summary.subset_sources.length
-          ? ` Hits supplied via ${payload.summary.subset_sources.join(" + ")}.`
-          : " No extra hits were supplied, so the plot shows only the full tested set.";
         const annotationNote = ` Annotation source: ${payload.summary.annotation_source}.`;
         setStatus(
-          `Plot ready. ${payload.summary.selected_hits_total} highlighted genes over ${payload.summary.annotated_genes_total} annotated tested genes.${subsetSources}${annotationNote}`,
+          `Plot ready. ${payload.summary.primary_hits_total} primary hits and ${payload.summary.secondary_hits_total} secondary hits across ${payload.summary.annotated_genes_total} annotated genes.${annotationNote}`,
           "ok"
         );
+        setGenerateButtonState(GENERATE_BUTTON_DONE, false);
         plotControls.hidden = false;
         await applyLabels();
       } catch (error) {
         currentPlotId = "";
         currentFigure = null;
+        setGenerateButtonState(GENERATE_BUTTON_IDLE, false);
         setStatus(error.message || "Something went wrong while building the plot.", "error");
       }
     }
@@ -378,6 +452,7 @@
     form.addEventListener("reset", () => {
       currentPlotId = "";
       currentFigure = null;
+      setGenerateButtonState(GENERATE_BUTTON_IDLE, false);
       summaryGrid.hidden = true;
       plotControls.hidden = true;
       plotNode.innerHTML = "";
@@ -398,6 +473,10 @@
         event.preventDefault();
         void applyLabels();
       }
+    });
+
+    labelLayerSelect.addEventListener("change", () => {
+      void applyLabels();
     });
 
     downloadSvg.addEventListener("click", () => {
