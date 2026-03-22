@@ -1,0 +1,17 @@
+[Unit]
+Description=Genomic Hit Locator web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/aag/genomic-hit-locator
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/aag/genomic-hit-locator/deploy/genomic-hit-locator.env
+ExecStart=/home/aag/genomic-hit-locator/.venv/bin/python -m uvicorn app:app --host 127.0.1.1 --port 8082
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Pooled Screen Analysis</p>
+      <h1>{{ title }}</h1>
+      <p class="subtitle">{{ subtitle }}</p>
+      <div class="actions">
+        <a class="button primary" href="{{ public_base_url }}" target="_top" rel="noreferrer">Open standalone app</a>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>What this will become</h2>
+        <ul>
+          <li>Candidate hit localization across genomic intervals</li>
+          <li>Pooled-screen QC checkpoints and upload validation</li>
+          <li>Interactive summaries designed for embedding in the ISAB website</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Deployment status</h2>
+        <ul>
+          <li>Separate app, port, and service from the arrayed-screen tool</li>
+          <li>Prepared for `iframe` embedding from `isab.science`</li>
+          <li>Intended to share the same Cloudflare login front door</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
+
