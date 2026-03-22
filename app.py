@@ -32,6 +32,10 @@ PUBLIC_BASE_URL = os.getenv("GENOMIC_HIT_LOCATOR_PUBLIC_BASE_URL", "https://geno
 
 GENE_ALIASES = ("Gene_symbol", "Gene symbol", "GeneSymbol", "Gene", "Symbol", "gene")
 EFFECT_ALIASES = (
+    "log2ratio",
+    "Log2Ratio",
+    "log2_ratio",
+    "Log2_Ratio",
     "Mean_log2FC",
     "Mean_log2",
     "Log2FC",
@@ -225,7 +229,7 @@ def load_annotation_reference() -> tuple[pd.DataFrame, str]:
 
 def _prepare_all_gene_table(raw: pd.DataFrame, scale_mode: str) -> pd.DataFrame:
     gene_col = _resolve_column(list(raw.columns), GENE_ALIASES, "gene")
-    effect_col = _resolve_column(list(raw.columns), EFFECT_ALIASES, "effect size")
+    effect_col = _resolve_column(list(raw.columns), EFFECT_ALIASES, "effect size (for example log2ratio)")
 
     data = raw.rename(columns={gene_col: "gene", effect_col: "effect_raw"}).copy()
     data["gene"] = data["gene"].map(_normalize_gene)
@@ -237,10 +241,10 @@ def _prepare_all_gene_table(raw: pd.DataFrame, scale_mode: str) -> pd.DataFrame:
 
     if scale_mode == "log2":
         data["effect_plot"] = data["effect_raw"].map(lambda value: math.copysign(math.log2(abs(value) + 1.0), value))
-        data["y_axis_label"] = "Signed log2(|effect| + 1)"
+        data["y_axis_label"] = "Signed log2(|log2ratio| + 1)"
     else:
         data["effect_plot"] = data["effect_raw"]
-        data["y_axis_label"] = "Effect size"
+        data["y_axis_label"] = "log2ratio"
     return data
 
 

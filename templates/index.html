@@ -39,7 +39,7 @@
         <label class="field">
           <span>All tested genes file</span>
           <input type="file" name="all_genes_file" accept=".csv,.tsv,.txt,.xlsx,.xls" required>
-          <small>Needs gene and effect columns. Common names like <code>Gene_symbol</code> and <code>Mean_log2FC</code> are detected automatically.</small>
+          <small>Needs gene and effect columns. Common names like <code>Gene_symbol</code> and <code>log2ratio</code> are detected automatically.</small>
         </label>
 
         <label class="field">
@@ -58,8 +58,8 @@
           <label class="field">
             <span>Y-axis transform</span>
             <select name="scale_mode">
-              <option value="linear">Linear / as supplied</option>
-              <option value="log2">Signed log2(|effect| + 1)</option>
+              <option value="linear">Linear / as supplied log2ratio</option>
+              <option value="log2">Signed log2(|log2ratio| + 1)</option>
             </select>
           </label>
 
