@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <main class="shell shell-narrow">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Documentation</p>
+        <h1>{{ title }}</h1>
+        <p class="subtitle">{{ subtitle }}</p>
+        <div class="hero-links">
+          <a class="text-link" href="/">Back to the app</a>
+        </div>
+      </div>
+    </section>
+
+    <article class="panel markdown-body">
+      {{ readme_html | safe }}
+    </article>
+  </main>
+</body>
+</html>

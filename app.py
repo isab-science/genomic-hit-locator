@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import markdown
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -30,10 +31,20 @@ APP_SUBTITLE = (
 )
 PUBLIC_BASE_URL = os.getenv("GENOMIC_HIT_LOCATOR_PUBLIC_BASE_URL", "https://genomic-hit-locator.isab.science").strip()
 
-GENE_ALIASES = ("Gene_symbol", "Gene symbol", "GeneSymbol", "Gene", "Symbol", "gene")
+GENE_ALIASES = (
+    "Gene_symbol",
+    "Gene symbol",
+    "GeneSymbol",
+    "All_targeted_genes",
+    "Gene",
+    "Symbol",
+    "gene",
+    "Gene_TSS",
+)
 EFFECT_ALIASES = (
     "log2ratio",
     "Log2Ratio",
+    "log2Ratio",
     "log2_ratio",
     "Log2_Ratio",
     "Mean_log2FC",
@@ -81,6 +92,7 @@ app = FastAPI(title=APP_TITLE)
 templates = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="static")
 PLOT_CACHE: dict[str, dict[str, Any]] = {}
+README_PATH = APP_ROOT / "README.md"
 
 
 @app.middleware("http")
@@ -440,7 +452,31 @@ async def index(request: Request) -> HTMLResponse:
             "title": APP_TITLE,
             "subtitle": APP_SUBTITLE,
             "public_base_url": PUBLIC_BASE_URL,
+            "readme_url": "/readme",
             "annotation_status": annotation_status,
+        },
+    )
+
+
+@app.get("/readme", response_class=HTMLResponse)
+async def readme(request: Request) -> HTMLResponse:
+    try:
+        markdown_source = README_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="README.md not found.") from exc
+
+    rendered = markdown.markdown(
+        markdown_source,
+        extensions=["tables", "fenced_code", "toc"],
+        output_format="html5",
+    )
+    return templates.TemplateResponse(
+        request,
+        "readme.html",
+        {
+            "title": f"{APP_TITLE} README",
+            "subtitle": "Living guide for using and evolving the Genomic Hit Locator.",
+            "readme_html": rendered,
         },
     )
 
