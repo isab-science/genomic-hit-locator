@@ -5,37 +5,220 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
   <main class="shell">
     <section class="hero">
-      <p class="eyebrow">Pooled Screen Analysis</p>
-      <h1>{{ title }}</h1>
-      <p class="subtitle">{{ subtitle }}</p>
-      <div class="actions">
-        <a class="button primary" href="{{ public_base_url }}" target="_top" rel="noreferrer">Open standalone app</a>
+      <div class="hero-copy">
+        <p class="eyebrow">Genome-Wide Hit Context</p>
+        <h1>{{ title }}</h1>
+        <p class="subtitle">{{ subtitle }}</p>
+        <div class="annotation-banner {% if annotation_status.ok %}ok{% else %}error{% endif %}">
+          {% if annotation_status.ok %}
+          <strong>Annotation reference ready.</strong>
+          <span>{{ annotation_status.gene_count }} annotated genes loaded from {{ annotation_status.source }}</span>
+          {% else %}
+          <strong>Annotation reference unavailable.</strong>
+          <span>{{ annotation_status.error }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="hero-actions">
+        <a class="button quiet" href="{{ public_base_url }}" target="_top" rel="noreferrer">Open standalone app</a>
       </div>
     </section>
 
-    <section class="grid">
-      <article class="card">
-        <h2>What this will become</h2>
-        <ul>
-          <li>Candidate hit localization across genomic intervals</li>
-          <li>Pooled-screen QC checkpoints and upload validation</li>
-          <li>Interactive summaries designed for embedding in the ISAB website</li>
-        </ul>
-      </article>
-      <article class="card">
-        <h2>Deployment status</h2>
-        <ul>
-          <li>Separate app, port, and service from the arrayed-screen tool</li>
-          <li>Prepared for `iframe` embedding from `isab.science`</li>
-          <li>Intended to share the same Cloudflare login front door</li>
-        </ul>
-      </article>
+    <section class="workspace">
+      <form id="locator-form" class="panel controls" enctype="multipart/form-data">
+        <div class="panel-heading">
+          <h2>Input</h2>
+          <p>Upload a screen-wide gene/effect table, then highlight hits either from a second file or by pasting genes.</p>
+        </div>
+
+        <label class="field">
+          <span>All tested genes file</span>
+          <input type="file" name="all_genes_file" accept=".csv,.tsv,.txt,.xlsx,.xls" required>
+          <small>Needs gene and effect columns. Common names like <code>Gene_symbol</code> and <code>Mean_log2FC</code> are detected automatically.</small>
+        </label>
+
+        <label class="field">
+          <span>Subset hits file</span>
+          <input type="file" name="subset_file" accept=".csv,.tsv,.txt,.xlsx,.xls">
+          <small>Optional. Needs a gene column only.</small>
+        </label>
+
+        <label class="field">
+          <span>Or paste genes</span>
+          <textarea name="subset_genes_text" rows="5" placeholder="PRNP, APP, SNCA"></textarea>
+          <small>Comma, newline, or semicolon separated. The pasted list is merged with any uploaded hit file.</small>
+        </label>
+
+        <div class="field-grid">
+          <label class="field">
+            <span>Y-axis transform</span>
+            <select name="scale_mode">
+              <option value="linear">Linear / as supplied</option>
+              <option value="log2">Signed log2(|effect| + 1)</option>
+            </select>
+          </label>
+
+          <label class="field color-field">
+            <span>All genes color</span>
+            <input type="color" name="all_genes_color" value="#d9dde3">
+          </label>
+
+          <label class="field color-field">
+            <span>Hits color</span>
+            <input type="color" name="hit_genes_color" value="#d93f6a">
+          </label>
+        </div>
+
+        <div class="actions">
+          <button class="button primary" type="submit">Generate plot</button>
+          <button class="button quiet" type="reset">Reset</button>
+        </div>
+      </form>
+
+      <section class="panel results">
+        <div class="panel-heading">
+          <h2>Chromosome skyline</h2>
+          <p>The x-axis spans genomic position across chromosomes, and highlighted hits are overlaid on the full tested set.</p>
+        </div>
+
+        <div id="status-box" class="status-box">Choose your files and generate the first plot.</div>
+        <div id="summary-grid" class="summary-grid" hidden></div>
+
+        <div id="plot-frame" class="plot-frame">
+          <div id="plot"></div>
+        </div>
+
+        <div id="export-card" class="export-card" hidden>
+          <div class="export-copy">
+            <h3>SVG export</h3>
+            <p>Pick a publication-friendly canvas size. SVG stays vector-based while preserving the chosen layout dimensions.</p>
+          </div>
+          <div class="export-controls">
+            <label class="field inline-field">
+              <span>Preset</span>
+              <select id="export-preset">
+                <option value="1200x700">Compact 1200 × 700</option>
+                <option value="1600x900" selected>Standard 1600 × 900</option>
+                <option value="2200x1200">Wide 2200 × 1200</option>
+                <option value="3000x1600">Figure panel 3000 × 1600</option>
+              </select>
+            </label>
+            <button id="download-svg" class="button primary" type="button">Download SVG</button>
+          </div>
+        </div>
+      </section>
     </section>
   </main>
+
+  <script>
+    const form = document.getElementById("locator-form");
+    const statusBox = document.getElementById("status-box");
+    const summaryGrid = document.getElementById("summary-grid");
+    const exportCard = document.getElementById("export-card");
+    const plotNode = document.getElementById("plot");
+    const exportPreset = document.getElementById("export-preset");
+    const downloadSvg = document.getElementById("download-svg");
+
+    let currentPlotId = "";
+
+    function setStatus(message, kind = "info") {
+      statusBox.textContent = message;
+      statusBox.dataset.kind = kind;
+    }
+
+    function renderSummary(summary) {
+      const cards = [
+        ["All tested genes", summary.all_genes_total],
+        ["Annotated genes", summary.annotated_genes_total],
+        ["Unannotated genes", summary.missing_annotation_total],
+        ["Highlighted hits", summary.selected_hits_total],
+      ];
+
+      summaryGrid.innerHTML = "";
+      for (const [label, value] of cards) {
+        const card = document.createElement("article");
+        card.className = "summary-card";
+        card.innerHTML = `<span>${label}</span><strong>${Number(value).toLocaleString()}</strong>`;
+        summaryGrid.appendChild(card);
+      }
+
+      if (summary.missing_selected_total > 0) {
+        const card = document.createElement("article");
+        card.className = "summary-card warning";
+        const preview = (summary.missing_selected_preview || []).join(", ");
+        card.innerHTML = `<span>Selected genes missing from tested set</span><strong>${summary.missing_selected_total.toLocaleString()}</strong><small>${preview}</small>`;
+        summaryGrid.appendChild(card);
+      }
+
+      summaryGrid.hidden = false;
+    }
+
+    async function handleSubmit(event) {
+      event.preventDefault();
+      setStatus("Building the chromosome skyline...", "busy");
+      exportCard.hidden = true;
+      summaryGrid.hidden = true;
+
+      const formData = new FormData(form);
+
+      try {
+        const response = await fetch("/api/plot", { method: "POST", body: formData });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || "The plot could not be generated.");
+        }
+
+        currentPlotId = payload.plot_id;
+        await Plotly.newPlot(plotNode, payload.figure.data, payload.figure.layout, {
+          responsive: true,
+          displaylogo: false,
+          toImageButtonOptions: {
+            format: "svg",
+            filename: "genomic-hit-locator",
+          },
+        });
+
+        renderSummary(payload.summary);
+
+        const subsetSources = payload.summary.subset_sources && payload.summary.subset_sources.length
+          ? ` Hits supplied via ${payload.summary.subset_sources.join(" + ")}.`
+          : " No extra hits were supplied, so the plot shows only the full tested set.";
+        const annotationNote = ` Annotation source: ${payload.summary.annotation_source}.`;
+        setStatus(
+          `Plot ready. ${payload.summary.selected_hits_total} highlighted genes over ${payload.summary.annotated_genes_total} annotated tested genes.${subsetSources}${annotationNote}`,
+          "ok"
+        );
+        exportCard.hidden = false;
+      } catch (error) {
+        currentPlotId = "";
+        setStatus(error.message || "Something went wrong while building the plot.", "error");
+      }
+    }
+
+    form.addEventListener("submit", handleSubmit);
+
+    form.addEventListener("reset", () => {
+      currentPlotId = "";
+      summaryGrid.hidden = true;
+      exportCard.hidden = true;
+      plotNode.innerHTML = "";
+      setStatus("Choose your files and generate the first plot.", "info");
+    });
+
+    downloadSvg.addEventListener("click", () => {
+      if (!currentPlotId) {
+        setStatus("Generate a plot first, then export it as SVG.", "error");
+        return;
+      }
+      const [width, height] = exportPreset.value.split("x");
+      const href = `/api/export/${currentPlotId}.svg?width=${encodeURIComponent(width)}&height=${encodeURIComponent(height)}&scale=1`;
+      window.location.href = href;
+    });
+  </script>
 </body>
 </html>
-
