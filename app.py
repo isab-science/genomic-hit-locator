@@ -515,16 +515,15 @@ def _build_pvalue_marker_config(
         [1.0, _pvalue_rgba(base_rgb, 1.0, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
     ]
 
-    visible_colors = [
-        _pvalue_rgba(base_rgb, raw_value, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)
-        for raw_value in norm.tolist()
-    ]
-
     tickvals = list(scale_context["tickvals"])
     ticktext = list(scale_context["ticktext"])
 
     marker = {
-        "color": visible_colors,
+        "color": norm.tolist(),
+        "cmin": 0.0,
+        "cmax": 1.0,
+        "colorscale": colorscale,
+        "showscale": False,
         "size": marker_size,
         "opacity": marker_opacity,
     }
