@@ -428,10 +428,15 @@ def _pvalue_display_intensity(raw_intensity: float) -> float:
     return PVALUE_COLORBAR_MIN_INTENSITY + ((1.0 - PVALUE_COLORBAR_MIN_INTENSITY) * clipped)
 
 
-def _pvalue_rgba(base_rgb: tuple[int, int, int], raw_intensity: float) -> str:
+def _pvalue_rgba(
+    base_rgb: tuple[int, int, int],
+    raw_intensity: float,
+    alpha_floor: float = 0.05,
+    alpha_ceiling: float = 1.0,
+) -> str:
     display_intensity = _pvalue_display_intensity(raw_intensity)
     rgb = _blend_rgb((255, 255, 255), base_rgb, 0.06 + (0.94 * display_intensity))
-    alpha = 0.05 + (0.95 * display_intensity)
+    alpha = alpha_floor + ((alpha_ceiling - alpha_floor) * display_intensity)
     return _rgba_string(rgb, alpha)
 
 
@@ -477,6 +482,8 @@ def _build_pvalue_marker_config(
     scale_context: dict[str, Any] | None = None,
     line: dict[str, Any] | None = None,
     symbol: str | None = None,
+    alpha_floor: float = 0.05,
+    alpha_ceiling: float = 1.0,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
     valid_mask = pvalues.notna() & (pvalues > 0)
@@ -502,13 +509,16 @@ def _build_pvalue_marker_config(
 
     base_rgb = _hex_to_rgb(base_color)
     colorscale = [
-        [0.0, _pvalue_rgba(base_rgb, 0.0)],
-        [0.25, _pvalue_rgba(base_rgb, 0.25)],
-        [0.6, _pvalue_rgba(base_rgb, 0.6)],
-        [1.0, _pvalue_rgba(base_rgb, 1.0)],
+        [0.0, _pvalue_rgba(base_rgb, 0.0, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
+        [0.25, _pvalue_rgba(base_rgb, 0.25, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
+        [0.6, _pvalue_rgba(base_rgb, 0.6, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
+        [1.0, _pvalue_rgba(base_rgb, 1.0, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
     ]
 
-    visible_colors = [_pvalue_rgba(base_rgb, raw_value) for raw_value in norm.tolist()]
+    visible_colors = [
+        _pvalue_rgba(base_rgb, raw_value, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)
+        for raw_value in norm.tolist()
+    ]
 
     tickvals = list(scale_context["tickvals"])
     ticktext = list(scale_context["ticktext"])
@@ -680,10 +690,12 @@ def _build_plot(
             "Secondary p",
             1.14,
             10,
-            0.98,
+            1.0,
             scale_context=global_scale_context,
-            line={"color": "#101828", "width": 1.1},
+            line={"color": "#14532d", "width": 1.2},
             symbol="diamond",
+            alpha_floor=1.0,
+            alpha_ceiling=1.0,
         )
         if secondary_scale:
             scale_summaries["secondary"] = secondary_scale
