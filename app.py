@@ -439,16 +439,26 @@ def _format_pvalue_tick(value: float) -> str:
     return f"{value:.1e}"
 
 
-def _compute_pvalue_scale_context(data: pd.DataFrame) -> dict[str, Any] | None:
+def _compute_pvalue_scale_context(data: pd.DataFrame, saturation_pvalue: float | None = None) -> dict[str, Any] | None:
     pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
     valid_mask = pvalues.notna() & (pvalues > 0)
     if valid_mask.sum() == 0:
         return None
 
     clipped = pvalues.clip(lower=1e-300, upper=1.0)
-    scores = clipped.map(lambda value: -math.log10(float(value)))  # noqa: C417
-    score_min = float(scores[valid_mask].min())
-    score_max = float(scores[valid_mask].max())
+    observed_min = float(clipped[valid_mask].min())
+    observed_max = float(clipped[valid_mask].max())
+    effective_min = observed_min
+    if saturation_pvalue is not None:
+        try:
+            effective_min = min(max(float(saturation_pvalue), 1e-300), 1.0)
+        except (TypeError, ValueError):
+            effective_min = observed_min
+
+    score_min = float(-math.log10(observed_max))
+    score_max = float(-math.log10(effective_min))
+    if score_max <= score_min:
+        score_max = float(-math.log10(observed_min))
     score_span = max(score_max - score_min, 1e-9)
     tickvals = [0.0, 0.25, 0.5, 0.75, 1.0]
     ticktext = [_format_pvalue_tick(10 ** (-(score_min + (value * score_span)))) for value in tickvals]
@@ -458,8 +468,9 @@ def _compute_pvalue_scale_context(data: pd.DataFrame) -> dict[str, Any] | None:
         "score_span": score_span,
         "tickvals": tickvals,
         "ticktext": ticktext,
-        "pvalue_min": float(clipped[valid_mask].min()),
-        "pvalue_max": float(clipped[valid_mask].max()),
+        "pvalue_min": observed_min,
+        "pvalue_max": observed_max,
+        "effective_pvalue_min": effective_min,
     }
 
 
@@ -580,6 +591,9 @@ def _build_plot(
     primary_end_color: str,
     secondary_start_color: str,
     secondary_end_color: str,
+    genomewide_saturation_pvalue: float,
+    primary_saturation_pvalue: float,
+    secondary_saturation_pvalue: float,
 ) -> tuple[go.Figure, dict[str, Any]]:
     plot_df, tick_vals, tick_labels, chromosome_bounds = _build_genome_axis(data)
     genomewide_start = _hex_with_alpha(genomewide_start_color, "#ffe7ea")
@@ -614,7 +628,7 @@ def _build_plot(
             1.02,
             6,
             1.0,
-            scale_context=_compute_pvalue_scale_context(plot_df),
+            scale_context=_compute_pvalue_scale_context(plot_df, genomewide_saturation_pvalue),
         )
         if pvalue_scale:
             scale_summaries["genomewide"] = pvalue_scale
@@ -647,7 +661,7 @@ def _build_plot(
             1.08,
             9,
             0.96,
-            scale_context=_compute_pvalue_scale_context(primary_df),
+            scale_context=_compute_pvalue_scale_context(primary_df, primary_saturation_pvalue),
             line={"color": "#ffffff", "width": 1},
         )
         if primary_scale:
@@ -682,7 +696,7 @@ def _build_plot(
             1.14,
             10,
             1.0,
-            scale_context=_compute_pvalue_scale_context(secondary_df),
+            scale_context=_compute_pvalue_scale_context(secondary_df, secondary_saturation_pvalue),
             line={"color": "#14532d", "width": 1.2},
             symbol="diamond",
         )
@@ -811,10 +825,13 @@ async def api_plot(
     scale_mode: str = Form(default="linear"),
     genomewide_start_color: str = Form(default="#ffffff"),
     genomewide_end_color: str = Form(default="#ff0000"),
+    genomewide_saturation_pvalue: float = Form(default=1e-7),
     primary_start_color: str = Form(default="#ffffff"),
     primary_end_color: str = Form(default="#5a00ff"),
+    primary_saturation_pvalue: float = Form(default=1e-7),
     secondary_start_color: str = Form(default="#ffffff"),
     secondary_end_color: str = Form(default="#000000"),
+    secondary_saturation_pvalue: float = Form(default=1e-7),
     show_genomewide: str = Form(default="show"),
     primary_mode: str = Form(default="effect_only"),
     primary_effect_threshold: float = Form(default=1.0),
@@ -893,6 +910,9 @@ async def api_plot(
         primary_end_color=primary_end_color,
         secondary_start_color=secondary_start_color,
         secondary_end_color=secondary_end_color,
+        genomewide_saturation_pvalue=genomewide_saturation_pvalue,
+        primary_saturation_pvalue=primary_saturation_pvalue,
+        secondary_saturation_pvalue=secondary_saturation_pvalue,
     )
     figure_payload = json.loads(figure.to_json())
     summary = {
