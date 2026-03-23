@@ -588,7 +588,6 @@ def _build_plot(
     primary_end = _hex_with_alpha(primary_end_color, "#6a3fd9")
     secondary_start = _hex_with_alpha(secondary_start_color, "#dfffd8")
     secondary_end = _hex_with_alpha(secondary_end_color, "#19ff00")
-    global_scale_context = _compute_pvalue_scale_context(plot_df)
 
     primary_df = plot_df[plot_df["gene"].isin(primary_genes)].copy()
     secondary_df = plot_df[plot_df["gene"].isin(secondary_genes)].copy()
@@ -615,7 +614,7 @@ def _build_plot(
             1.02,
             6,
             1.0,
-            scale_context=global_scale_context,
+            scale_context=_compute_pvalue_scale_context(plot_df),
         )
         if pvalue_scale:
             scale_summaries["genomewide"] = pvalue_scale
@@ -648,7 +647,7 @@ def _build_plot(
             1.08,
             9,
             0.96,
-            scale_context=global_scale_context,
+            scale_context=_compute_pvalue_scale_context(primary_df),
             line={"color": "#ffffff", "width": 1},
         )
         if primary_scale:
@@ -683,7 +682,7 @@ def _build_plot(
             1.14,
             10,
             1.0,
-            scale_context=global_scale_context,
+            scale_context=_compute_pvalue_scale_context(secondary_df),
             line={"color": "#14532d", "width": 1.2},
             symbol="diamond",
         )
