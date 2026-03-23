@@ -444,6 +444,13 @@
       currentFigure = { data: plotNode.data, layout: plotNode.layout };
     }
 
+    function syncCurrentFigure() {
+      currentFigure = {
+        data: JSON.parse(JSON.stringify(plotNode.data || [])),
+        layout: JSON.parse(JSON.stringify(plotNode.layout || {})),
+      };
+    }
+
     function renderSummary(summary) {
       const cards = [
         ["Genome-wide genes", summary.all_genes_total],
@@ -499,7 +506,7 @@
             filename: "genomic-hit-locator",
           },
         });
-        currentFigure = { data: plotNode.data, layout: plotNode.layout };
+        syncCurrentFigure();
 
         renderSummary(payload.summary);
 
@@ -552,13 +559,42 @@
     });
 
     downloadSvg.addEventListener("click", () => {
-      if (!currentPlotId) {
+      if (!currentFigure) {
         setStatus("Generate a plot first, then export it as SVG.", "error");
         return;
       }
-      const [width, height] = exportPreset.value.split("x");
-      const href = `/api/export/${currentPlotId}.svg?width=${encodeURIComponent(width)}&height=${encodeURIComponent(height)}&scale=1`;
-      window.location.href = href;
+      syncCurrentFigure();
+      const [width, height] = exportPreset.value.split("x").map((value) => Number(value));
+      void (async () => {
+        try {
+          const response = await fetch("/api/export/current.svg", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              figure: currentFigure,
+              width,
+              height,
+              scale: 1,
+              filename: currentPlotId ? `genomic-hit-locator-${currentPlotId}` : "genomic-hit-locator-current",
+            }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.detail || "SVG export failed.");
+          }
+          const blob = await response.blob();
+          const href = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = href;
+          link.download = currentPlotId ? `genomic-hit-locator-${currentPlotId}.svg` : "genomic-hit-locator-current.svg";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(href);
+        } catch (error) {
+          setStatus(error.message || "SVG export failed.", "error");
+        }
+      })();
     });
   </script>
 </body>

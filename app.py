@@ -769,6 +769,15 @@ def _resolve_plot_state(plot_id: str) -> dict[str, Any]:
     return state
 
 
+def _figure_from_payload(figure_payload: dict[str, Any]) -> go.Figure:
+    try:
+        data = figure_payload.get("data", [])
+        layout = figure_payload.get("layout", {})
+    except AttributeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid figure payload.") from exc
+    return go.Figure(data=data, layout=layout)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     annotation_status = {"ok": True, "source": "", "gene_count": 0, "error": ""}
@@ -972,6 +981,28 @@ async def export_svg(
         content=svg_bytes,
         media_type="image/svg+xml",
         headers={"Content-Disposition": f'attachment; filename="genomic-hit-locator-{plot_id}.svg"'},
+    )
+
+
+@app.post("/api/export/current.svg")
+async def export_current_svg(request: Request) -> Response:
+    payload = await request.json()
+    figure_payload = payload.get("figure")
+    width = int(payload.get("width", 1600))
+    height = int(payload.get("height", 900))
+    scale = float(payload.get("scale", 1))
+    filename = _normalize_text(payload.get("filename")) or "genomic-hit-locator-current"
+    if figure_payload is None:
+        raise HTTPException(status_code=400, detail="Current figure payload is required for export.")
+    fig = _figure_from_payload(figure_payload)
+    try:
+        svg_bytes = pio.to_image(fig, format="svg", width=width, height=height, scale=scale)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"SVG export failed: {exc}") from exc
+    return Response(
+        content=svg_bytes,
+        media_type="image/svg+xml",
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}.svg\"'},
     )
 
 
