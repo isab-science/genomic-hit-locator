@@ -6,7 +6,6 @@ import math
 import os
 import time
 import uuid
-import colorsys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -430,24 +429,13 @@ def _pvalue_display_intensity(raw_intensity: float) -> float:
 
 
 def _pvalue_color(
-    base_rgb: tuple[int, int, int],
+    start_rgb: tuple[int, int, int],
+    end_rgb: tuple[int, int, int],
     raw_intensity: float,
-    lightness_floor: float = 0.94,
-    lightness_ceiling: float = 0.38,
-    saturation_floor: float = 0.22,
-    saturation_ceiling: float = 0.96,
 ) -> str:
     display_intensity = _pvalue_display_intensity(raw_intensity)
-    red, green, blue = (channel / 255.0 for channel in base_rgb)
-    hue, _, _ = colorsys.rgb_to_hls(red, green, blue)
-    mapped_lightness = lightness_floor + ((lightness_ceiling - lightness_floor) * display_intensity)
-    mapped_saturation = saturation_floor + ((saturation_ceiling - saturation_floor) * display_intensity)
-    adjusted_rgb = colorsys.hls_to_rgb(
-        hue,
-        max(0.0, min(1.0, mapped_lightness)),
-        max(0.0, min(1.0, mapped_saturation)),
-    )
-    return f"rgb({int(round(adjusted_rgb[0] * 255))}, {int(round(adjusted_rgb[1] * 255))}, {int(round(adjusted_rgb[2] * 255))})"
+    adjusted_rgb = _blend_rgb(start_rgb, end_rgb, display_intensity)
+    return f"rgb({adjusted_rgb[0]}, {adjusted_rgb[1]}, {adjusted_rgb[2]})"
 
 
 def _format_pvalue_tick(value: float) -> str:
@@ -484,7 +472,8 @@ def _compute_pvalue_scale_context(data: pd.DataFrame) -> dict[str, Any] | None:
 
 def _build_pvalue_marker_config(
     data: pd.DataFrame,
-    base_color: str,
+    start_color: str,
+    end_color: str,
     colorbar_title: str,
     colorbar_x: float,
     marker_size: float,
@@ -492,15 +481,11 @@ def _build_pvalue_marker_config(
     scale_context: dict[str, Any] | None = None,
     line: dict[str, Any] | None = None,
     symbol: str | None = None,
-    lightness_floor: float = 0.94,
-    lightness_ceiling: float = 0.38,
-    saturation_floor: float = 0.22,
-    saturation_ceiling: float = 0.96,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
     valid_mask = pvalues.notna() & (pvalues > 0)
     if valid_mask.sum() == 0:
-        marker: dict[str, Any] = {"color": base_color, "size": marker_size, "opacity": marker_opacity}
+        marker: dict[str, Any] = {"color": end_color, "size": marker_size, "opacity": marker_opacity}
         if line:
             marker["line"] = line
         if symbol:
@@ -519,33 +504,11 @@ def _build_pvalue_marker_config(
     score_span = float(scale_context["score_span"])
     norm = ((scores - score_min) / score_span).fillna(0.0).clip(lower=0.0, upper=1.0)
 
-    base_rgb = _hex_to_rgb(base_color)
+    start_rgb = _hex_to_rgb(start_color)
+    end_rgb = _hex_to_rgb(end_color)
     scale_points = [0.0, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0]
-    colorscale = [
-        [
-            point,
-            _pvalue_color(
-                base_rgb,
-                point,
-                lightness_floor=lightness_floor,
-                lightness_ceiling=lightness_ceiling,
-                saturation_floor=saturation_floor,
-                saturation_ceiling=saturation_ceiling,
-            ),
-        ]
-        for point in scale_points
-    ]
-    visible_colors = [
-        _pvalue_color(
-            base_rgb,
-            raw_value,
-            lightness_floor=lightness_floor,
-            lightness_ceiling=lightness_ceiling,
-            saturation_floor=saturation_floor,
-            saturation_ceiling=saturation_ceiling,
-        )
-        for raw_value in norm.tolist()
-    ]
+    colorscale = [[point, _pvalue_color(start_rgb, end_rgb, point)] for point in scale_points]
+    visible_colors = [_pvalue_color(start_rgb, end_rgb, raw_value) for raw_value in norm.tolist()]
 
     tickvals = list(scale_context["tickvals"])
     ticktext = list(scale_context["ticktext"])
@@ -618,14 +581,20 @@ def _build_plot(
     show_genomewide: bool,
     primary_genes: set[str],
     secondary_genes: set[str],
-    genomewide_color: str,
-    primary_color: str,
-    secondary_color: str,
+    genomewide_start_color: str,
+    genomewide_end_color: str,
+    primary_start_color: str,
+    primary_end_color: str,
+    secondary_start_color: str,
+    secondary_end_color: str,
 ) -> tuple[go.Figure, dict[str, Any]]:
     plot_df, tick_vals, tick_labels, chromosome_bounds = _build_genome_axis(data)
-    background_color = _hex_with_alpha(genomewide_color, "#d9dde3")
-    primary_accent_color = _hex_with_alpha(primary_color, "#d93f6a")
-    secondary_accent_color = _hex_with_alpha(secondary_color, "#f59e0b")
+    genomewide_start = _hex_with_alpha(genomewide_start_color, "#ffe7ea")
+    genomewide_end = _hex_with_alpha(genomewide_end_color, "#ff8f95")
+    primary_start = _hex_with_alpha(primary_start_color, "#e7dcff")
+    primary_end = _hex_with_alpha(primary_end_color, "#6a3fd9")
+    secondary_start = _hex_with_alpha(secondary_start_color, "#dfffd8")
+    secondary_end = _hex_with_alpha(secondary_end_color, "#19ff00")
     global_scale_context = _compute_pvalue_scale_context(plot_df)
 
     primary_df = plot_df[plot_df["gene"].isin(primary_genes)].copy()
@@ -647,7 +616,8 @@ def _build_plot(
     if show_genomewide:
         genomewide_marker, pvalue_scale = _build_pvalue_marker_config(
             plot_df,
-            background_color,
+            genomewide_start,
+            genomewide_end,
             "Genome-wide p",
             1.02,
             6,
@@ -679,7 +649,8 @@ def _build_plot(
     if not primary_df.empty:
         primary_marker, primary_scale = _build_pvalue_marker_config(
             primary_df,
-            primary_accent_color,
+            primary_start,
+            primary_end,
             "Primary p",
             1.08,
             9,
@@ -713,7 +684,8 @@ def _build_plot(
     if not secondary_df.empty:
         secondary_marker, secondary_scale = _build_pvalue_marker_config(
             secondary_df,
-            secondary_accent_color,
+            secondary_start,
+            secondary_end,
             "Secondary p",
             1.14,
             10,
@@ -721,10 +693,6 @@ def _build_plot(
             scale_context=global_scale_context,
             line={"color": "#14532d", "width": 1.2},
             symbol="diamond",
-            lightness_floor=0.90,
-            lightness_ceiling=0.30,
-            saturation_floor=0.28,
-            saturation_ceiling=1.0,
         )
         if secondary_scale:
             scale_summaries["secondary"] = secondary_scale
@@ -849,9 +817,12 @@ async def api_plot(
     secondary_hits_file: UploadFile | None = File(default=None),
     secondary_hits_text: str = Form(default=""),
     scale_mode: str = Form(default="linear"),
-    genomewide_color: str = Form(default="#ff8f95"),
-    primary_color: str = Form(default="#6a3fd9"),
-    secondary_color: str = Form(default="#19ff00"),
+    genomewide_start_color: str = Form(default="#ffe7ea"),
+    genomewide_end_color: str = Form(default="#ff8f95"),
+    primary_start_color: str = Form(default="#e7dcff"),
+    primary_end_color: str = Form(default="#6a3fd9"),
+    secondary_start_color: str = Form(default="#dfffd8"),
+    secondary_end_color: str = Form(default="#19ff00"),
     show_genomewide: str = Form(default="show"),
     primary_mode: str = Form(default="effect_only"),
     primary_effect_threshold: float = Form(default=1.0),
@@ -924,9 +895,12 @@ async def api_plot(
         show_genomewide=(show_genomewide or "show").strip().lower() != "hide",
         primary_genes=primary_in_merged,
         secondary_genes=secondary_in_merged,
-        genomewide_color=genomewide_color,
-        primary_color=primary_color,
-        secondary_color=secondary_color,
+        genomewide_start_color=genomewide_start_color,
+        genomewide_end_color=genomewide_end_color,
+        primary_start_color=primary_start_color,
+        primary_end_color=primary_end_color,
+        secondary_start_color=secondary_start_color,
+        secondary_end_color=secondary_end_color,
     )
     figure_payload = json.loads(figure.to_json())
     summary = {

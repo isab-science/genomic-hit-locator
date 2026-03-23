@@ -69,10 +69,16 @@
               <label><input type="radio" name="show_genomewide" value="hide"> Hide</label>
             </fieldset>
 
-            <label class="field color-field">
-              <span>Genome-wide color</span>
-              <input type="color" name="genomewide_color" value="#ff8f95">
-            </label>
+            <div class="field field-grid">
+              <label class="color-field">
+                <span>Genome-wide start color</span>
+                <input type="color" name="genomewide_start_color" value="#ffe7ea">
+              </label>
+              <label class="color-field">
+                <span>Genome-wide end color</span>
+                <input type="color" name="genomewide_end_color" value="#ff8f95">
+              </label>
+            </div>
           </section>
 
           <section class="input-card">
@@ -96,10 +102,16 @@
               <input type="number" name="primary_pvalue_threshold" value="0.05" step="0.001" min="0">
             </label>
 
-            <label class="field color-field">
-              <span>Primary-hit color</span>
-              <input type="color" name="primary_color" value="#6a3fd9">
-            </label>
+            <div class="field field-grid">
+              <label class="color-field">
+                <span>Primary-hit start color</span>
+                <input type="color" name="primary_start_color" value="#e7dcff">
+              </label>
+              <label class="color-field">
+                <span>Primary-hit end color</span>
+                <input type="color" name="primary_end_color" value="#6a3fd9">
+              </label>
+            </div>
           </section>
 
           <section class="input-card">
@@ -123,10 +135,16 @@
               {% endif %}
             </p>
 
-            <label class="field color-field">
-              <span>Secondary-hit color</span>
-              <input type="color" name="secondary_color" value="#19ff00">
-            </label>
+            <div class="field field-grid">
+              <label class="color-field">
+                <span>Secondary-hit start color</span>
+                <input type="color" name="secondary_start_color" value="#dfffd8">
+              </label>
+              <label class="color-field">
+                <span>Secondary-hit end color</span>
+                <input type="color" name="secondary_end_color" value="#19ff00">
+              </label>
+            </div>
           </section>
         </div>
 
