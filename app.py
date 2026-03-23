@@ -6,6 +6,7 @@ import math
 import os
 import time
 import uuid
+import colorsys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -428,16 +429,18 @@ def _pvalue_display_intensity(raw_intensity: float) -> float:
     return PVALUE_COLORBAR_MIN_INTENSITY + ((1.0 - PVALUE_COLORBAR_MIN_INTENSITY) * clipped)
 
 
-def _pvalue_rgba(
+def _pvalue_color(
     base_rgb: tuple[int, int, int],
     raw_intensity: float,
-    alpha_floor: float = 0.05,
-    alpha_ceiling: float = 1.0,
+    lightness_floor: float = 0.84,
+    lightness_ceiling: float = 0.46,
 ) -> str:
     display_intensity = _pvalue_display_intensity(raw_intensity)
-    rgb = _blend_rgb((255, 255, 255), base_rgb, 0.06 + (0.94 * display_intensity))
-    alpha = alpha_floor + ((alpha_ceiling - alpha_floor) * display_intensity)
-    return _rgba_string(rgb, alpha)
+    red, green, blue = (channel / 255.0 for channel in base_rgb)
+    hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+    mapped_lightness = lightness_floor + ((lightness_ceiling - lightness_floor) * display_intensity)
+    adjusted_rgb = colorsys.hls_to_rgb(hue, max(0.0, min(1.0, mapped_lightness)), saturation)
+    return f"rgb({int(round(adjusted_rgb[0] * 255))}, {int(round(adjusted_rgb[1] * 255))}, {int(round(adjusted_rgb[2] * 255))})"
 
 
 def _format_pvalue_tick(value: float) -> str:
@@ -482,8 +485,8 @@ def _build_pvalue_marker_config(
     scale_context: dict[str, Any] | None = None,
     line: dict[str, Any] | None = None,
     symbol: str | None = None,
-    alpha_floor: float = 0.05,
-    alpha_ceiling: float = 1.0,
+    lightness_floor: float = 0.84,
+    lightness_ceiling: float = 0.46,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
     valid_mask = pvalues.notna() & (pvalues > 0)
@@ -509,10 +512,10 @@ def _build_pvalue_marker_config(
 
     base_rgb = _hex_to_rgb(base_color)
     colorscale = [
-        [0.0, _pvalue_rgba(base_rgb, 0.0, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
-        [0.25, _pvalue_rgba(base_rgb, 0.25, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
-        [0.6, _pvalue_rgba(base_rgb, 0.6, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
-        [1.0, _pvalue_rgba(base_rgb, 1.0, alpha_floor=alpha_floor, alpha_ceiling=alpha_ceiling)],
+        [0.0, _pvalue_color(base_rgb, 0.0, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
+        [0.25, _pvalue_color(base_rgb, 0.25, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
+        [0.6, _pvalue_color(base_rgb, 0.6, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
+        [1.0, _pvalue_color(base_rgb, 1.0, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
     ]
 
     tickvals = list(scale_context["tickvals"])
@@ -693,8 +696,8 @@ def _build_plot(
             scale_context=global_scale_context,
             line={"color": "#14532d", "width": 1.2},
             symbol="diamond",
-            alpha_floor=1.0,
-            alpha_ceiling=1.0,
+            lightness_floor=0.82,
+            lightness_ceiling=0.38,
         )
         if secondary_scale:
             scale_summaries["secondary"] = secondary_scale
