@@ -432,14 +432,21 @@ def _pvalue_display_intensity(raw_intensity: float) -> float:
 def _pvalue_color(
     base_rgb: tuple[int, int, int],
     raw_intensity: float,
-    lightness_floor: float = 0.84,
-    lightness_ceiling: float = 0.46,
+    lightness_floor: float = 0.94,
+    lightness_ceiling: float = 0.38,
+    saturation_floor: float = 0.22,
+    saturation_ceiling: float = 0.96,
 ) -> str:
     display_intensity = _pvalue_display_intensity(raw_intensity)
     red, green, blue = (channel / 255.0 for channel in base_rgb)
-    hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+    hue, _, _ = colorsys.rgb_to_hls(red, green, blue)
     mapped_lightness = lightness_floor + ((lightness_ceiling - lightness_floor) * display_intensity)
-    adjusted_rgb = colorsys.hls_to_rgb(hue, max(0.0, min(1.0, mapped_lightness)), saturation)
+    mapped_saturation = saturation_floor + ((saturation_ceiling - saturation_floor) * display_intensity)
+    adjusted_rgb = colorsys.hls_to_rgb(
+        hue,
+        max(0.0, min(1.0, mapped_lightness)),
+        max(0.0, min(1.0, mapped_saturation)),
+    )
     return f"rgb({int(round(adjusted_rgb[0] * 255))}, {int(round(adjusted_rgb[1] * 255))}, {int(round(adjusted_rgb[2] * 255))})"
 
 
@@ -485,8 +492,10 @@ def _build_pvalue_marker_config(
     scale_context: dict[str, Any] | None = None,
     line: dict[str, Any] | None = None,
     symbol: str | None = None,
-    lightness_floor: float = 0.84,
-    lightness_ceiling: float = 0.46,
+    lightness_floor: float = 0.94,
+    lightness_ceiling: float = 0.38,
+    saturation_floor: float = 0.22,
+    saturation_ceiling: float = 0.96,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     pvalues = pd.to_numeric(data["pvalue_raw"], errors="coerce")
     valid_mask = pvalues.notna() & (pvalues > 0)
@@ -511,22 +520,38 @@ def _build_pvalue_marker_config(
     norm = ((scores - score_min) / score_span).fillna(0.0).clip(lower=0.0, upper=1.0)
 
     base_rgb = _hex_to_rgb(base_color)
+    scale_points = [0.0, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0]
     colorscale = [
-        [0.0, _pvalue_color(base_rgb, 0.0, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
-        [0.25, _pvalue_color(base_rgb, 0.25, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
-        [0.6, _pvalue_color(base_rgb, 0.6, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
-        [1.0, _pvalue_color(base_rgb, 1.0, lightness_floor=lightness_floor, lightness_ceiling=lightness_ceiling)],
+        [
+            point,
+            _pvalue_color(
+                base_rgb,
+                point,
+                lightness_floor=lightness_floor,
+                lightness_ceiling=lightness_ceiling,
+                saturation_floor=saturation_floor,
+                saturation_ceiling=saturation_ceiling,
+            ),
+        ]
+        for point in scale_points
+    ]
+    visible_colors = [
+        _pvalue_color(
+            base_rgb,
+            raw_value,
+            lightness_floor=lightness_floor,
+            lightness_ceiling=lightness_ceiling,
+            saturation_floor=saturation_floor,
+            saturation_ceiling=saturation_ceiling,
+        )
+        for raw_value in norm.tolist()
     ]
 
     tickvals = list(scale_context["tickvals"])
     ticktext = list(scale_context["ticktext"])
 
     marker = {
-        "color": norm.tolist(),
-        "cmin": 0.0,
-        "cmax": 1.0,
-        "colorscale": colorscale,
-        "showscale": False,
+        "color": visible_colors,
         "size": marker_size,
         "opacity": marker_opacity,
     }
@@ -696,8 +721,10 @@ def _build_plot(
             scale_context=global_scale_context,
             line={"color": "#14532d", "width": 1.2},
             symbol="diamond",
-            lightness_floor=0.82,
-            lightness_ceiling=0.38,
+            lightness_floor=0.90,
+            lightness_ceiling=0.30,
+            saturation_floor=0.28,
+            saturation_ceiling=1.0,
         )
         if secondary_scale:
             scale_summaries["secondary"] = secondary_scale
