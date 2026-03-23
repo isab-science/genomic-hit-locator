@@ -87,6 +87,7 @@ DEFAULT_SECONDARY_SAMPLE = Path(
     os.getenv("GENOMIC_HIT_LOCATOR_DEFAULT_SECONDARY", str(DEFAULT_SAMPLE_DIR / "Secondary screen.xlsx")).strip()
 )
 PLOT_CACHE_LIMIT = 24
+PVALUE_COLORBAR_MIN_INTENSITY = 0.5
 
 
 def normalize_frame_ancestors(raw: str) -> str:
@@ -414,6 +415,18 @@ def _rgba_string(rgb: tuple[int, int, int], alpha: float = 1.0) -> str:
     return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {clipped:.3f})"
 
 
+def _pvalue_display_intensity(raw_intensity: float) -> float:
+    clipped = max(0.0, min(1.0, float(raw_intensity)))
+    return PVALUE_COLORBAR_MIN_INTENSITY + ((1.0 - PVALUE_COLORBAR_MIN_INTENSITY) * clipped)
+
+
+def _pvalue_rgba(base_rgb: tuple[int, int, int], raw_intensity: float) -> str:
+    display_intensity = _pvalue_display_intensity(raw_intensity)
+    rgb = _blend_rgb((255, 255, 255), base_rgb, 0.06 + (0.94 * display_intensity))
+    alpha = 0.05 + (0.95 * display_intensity)
+    return _rgba_string(rgb, alpha)
+
+
 def _format_pvalue_tick(value: float) -> str:
     if value >= 0.1:
         return f"{value:.2f}".rstrip("0").rstrip(".")
@@ -480,21 +493,14 @@ def _build_pvalue_marker_config(
     norm = ((scores - score_min) / score_span).fillna(0.0).clip(lower=0.0, upper=1.0)
 
     base_rgb = _hex_to_rgb(base_color)
-    pale_rgb = _blend_rgb(base_rgb, (255, 255, 255), 0.94)
-    mid_rgb = _blend_rgb(base_rgb, (255, 255, 255), 0.72)
     colorscale = [
-        [0.0, _rgba_string(pale_rgb, 0.12)],
-        [0.25, _rgba_string(mid_rgb, 0.28)],
-        [0.6, _rgba_string(base_rgb, 0.6)],
-        [1.0, _rgba_string(base_rgb, 1.0)],
+        [0.0, _pvalue_rgba(base_rgb, 0.0)],
+        [0.25, _pvalue_rgba(base_rgb, 0.25)],
+        [0.6, _pvalue_rgba(base_rgb, 0.6)],
+        [1.0, _pvalue_rgba(base_rgb, 1.0)],
     ]
 
-    visible_colors = []
-    for raw_value in norm.tolist():
-        intensity = max(0.0, min(1.0, float(raw_value)))
-        rgb = _blend_rgb((255, 255, 255), base_rgb, 0.06 + (0.94 * intensity))
-        alpha = 0.05 + (0.95 * intensity)
-        visible_colors.append(_rgba_string(rgb, alpha))
+    visible_colors = [_pvalue_rgba(base_rgb, raw_value) for raw_value in norm.tolist()]
 
     tickvals = list(scale_context["tickvals"])
     ticktext = list(scale_context["ticktext"])

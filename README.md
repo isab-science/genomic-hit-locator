@@ -193,7 +193,7 @@ All three data layers are currently colored by p-value intensity.
 
 Current intent:
 
-- weaker significance should appear pale and close to invisible
+- weaker significance should begin at a mid-strength tint rather than near-white
 - stronger significance should move toward the chosen layer color
 - all three layers should use the same genome-wide p-value reference scale so color intensity remains comparable across layers
 
