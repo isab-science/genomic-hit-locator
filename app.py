@@ -87,7 +87,6 @@ DEFAULT_SECONDARY_SAMPLE = Path(
     os.getenv("GENOMIC_HIT_LOCATOR_DEFAULT_SECONDARY", str(DEFAULT_SAMPLE_DIR / "Secondary screen.xlsx")).strip()
 )
 PLOT_CACHE_LIMIT = 24
-PVALUE_COLORBAR_MIN_INTENSITY = 0.5
 
 
 def normalize_frame_ancestors(raw: str) -> str:
@@ -423,18 +422,12 @@ def _rgba_string(rgb: tuple[int, int, int], alpha: float = 1.0) -> str:
     return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {clipped:.3f})"
 
 
-def _pvalue_display_intensity(raw_intensity: float) -> float:
-    clipped = max(0.0, min(1.0, float(raw_intensity)))
-    return PVALUE_COLORBAR_MIN_INTENSITY + ((1.0 - PVALUE_COLORBAR_MIN_INTENSITY) * clipped)
-
-
 def _pvalue_color(
     start_rgb: tuple[int, int, int],
     end_rgb: tuple[int, int, int],
     raw_intensity: float,
 ) -> str:
-    display_intensity = _pvalue_display_intensity(raw_intensity)
-    adjusted_rgb = _blend_rgb(start_rgb, end_rgb, display_intensity)
+    adjusted_rgb = _blend_rgb(start_rgb, end_rgb, raw_intensity)
     return f"rgb({adjusted_rgb[0]}, {adjusted_rgb[1]}, {adjusted_rgb[2]})"
 
 
