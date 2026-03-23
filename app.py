@@ -323,6 +323,14 @@ def _parse_uploaded_gene_list(raw: pd.DataFrame | None, label: str) -> set[str]:
     return {gene for gene in genes if gene}
 
 
+def _parse_gene_text_list(raw: str | None) -> set[str]:
+    tokens = (_normalize_text(raw)).replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    if not tokens:
+        return set()
+    genes = {_normalize_gene(token) for token in tokens.replace(";", ",").split(",")}
+    return {gene for gene in genes if gene}
+
+
 def _derive_primary_hits(
     data: pd.DataFrame,
     selection_mode: str,
@@ -798,6 +806,7 @@ async def readme(request: Request) -> HTMLResponse:
 async def api_plot(
     all_genes_file: UploadFile | None = File(default=None),
     secondary_hits_file: UploadFile | None = File(default=None),
+    secondary_hits_text: str = Form(default=""),
     scale_mode: str = Form(default="linear"),
     genomewide_color: str = Form(default="#ff8f95"),
     primary_color: str = Form(default="#6a3fd9"),
@@ -832,10 +841,13 @@ async def api_plot(
 
     secondary_raw: pd.DataFrame | None = None
     using_default_secondary = False
+    secondary_gene_text = _normalize_text(secondary_hits_text)
     if secondary_hits_file is not None and secondary_hits_file.filename:
         subset_bytes = await secondary_hits_file.read()
         if subset_bytes:
             secondary_raw = _read_tabular_upload(subset_bytes, secondary_hits_file.filename)
+    elif secondary_gene_text:
+        secondary_raw = None
     elif DEFAULT_SECONDARY_SAMPLE.exists():
         secondary_raw = _read_tabular_path(DEFAULT_SECONDARY_SAMPLE)
         using_default_secondary = True
@@ -854,7 +866,11 @@ async def api_plot(
         effect_threshold=primary_effect_threshold,
         pvalue_threshold=primary_pvalue_threshold,
     )
-    secondary_genes = _parse_uploaded_gene_list(secondary_raw, "secondary hit")
+    secondary_genes = (
+        _parse_uploaded_gene_list(secondary_raw, "secondary hit")
+        if secondary_raw is not None
+        else _parse_gene_text_list(secondary_gene_text)
+    )
 
     missing_annotation = int(prepared.shape[0] - merged.shape[0])
     merged_gene_set = set(merged["gene"])
@@ -893,7 +909,7 @@ async def api_plot(
             "secondary_hits": (
                 secondary_hits_file.filename
                 if secondary_hits_file is not None and secondary_hits_file.filename
-                else (DEFAULT_SECONDARY_SAMPLE.name if using_default_secondary else None)
+                else ("manual entry" if secondary_gene_text else (DEFAULT_SECONDARY_SAMPLE.name if using_default_secondary else None))
             ),
             "using_default_all_genes": using_default_all_genes,
             "using_default_secondary": using_default_secondary,

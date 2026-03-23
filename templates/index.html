@@ -107,11 +107,17 @@
             <label class="field">
               <span>Secondary hitlist file</span>
               <input type="file" name="secondary_hits_file" accept=".csv,.tsv,.txt,.xlsx,.xls">
-              <small>Upload a gene list for the second highlighted layer.</small>
+              <small>Upload a gene list for the second highlighted layer, or leave this empty and enter genes below.</small>
+            </label>
+
+            <label class="field">
+              <span>Or enter genes directly (comma separated)</span>
+              <textarea name="secondary_hits_text" rows="3" placeholder="PRNP, APP, SNCA"></textarea>
+              <small>The pasted list is used when no secondary-hit file is selected.</small>
             </label>
             <p class="sample-note {% if default_secondary_sample.available %}ok{% else %}muted{% endif %}">
               {% if default_secondary_sample.available %}
-              Default sample installed: <strong>{{ default_secondary_sample.filename }}</strong>
+              Default sample installed: <strong>{{ default_secondary_sample.filename }}</strong>. It is used only when both fields above are empty.
               {% else %}
               No default secondary-hit sample installed yet.
               {% endif %}
