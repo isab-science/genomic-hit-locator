@@ -353,6 +353,17 @@ textarea {
   font-size: 1.45rem;
 }
 
+.summary-download {
+  margin-top: 8px;
+  justify-self: start;
+}
+
+.summary-download:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .summary-card.warning {
   background: var(--warn-bg);
   color: var(--warn-ink);

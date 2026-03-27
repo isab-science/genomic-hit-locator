@@ -330,6 +330,10 @@ def _parse_gene_text_list(raw: str | None) -> set[str]:
     return {gene for gene in genes if gene}
 
 
+def _exclude_control_genes(genes: list[str] | set[str]) -> list[str]:
+    return sorted(gene for gene in genes if "CONTROL" not in _normalize_gene(gene))
+
+
 def _derive_primary_hits(
     data: pd.DataFrame,
     selection_mode: str,
@@ -580,6 +584,33 @@ def _add_colorbar_trace(fig: go.Figure, scale_summary: dict[str, Any], trace_nam
     )
 
 
+def _add_legend_trace(
+    fig: go.Figure,
+    trace_name: str,
+    color: str,
+    marker_size: float,
+    symbol: str | None = None,
+    line: dict[str, Any] | None = None,
+) -> None:
+    marker: dict[str, Any] = {"size": marker_size, "color": color}
+    if symbol:
+        marker["symbol"] = symbol
+    if line:
+        marker["line"] = line
+    fig.add_trace(
+        go.Scatter(
+            x=[0],
+            y=[0],
+            mode="markers",
+            name=trace_name,
+            marker=marker,
+            hoverinfo="skip",
+            showlegend=True,
+            visible="legendonly",
+        )
+    )
+
+
 def _build_plot(
     data: pd.DataFrame,
     show_genomewide: bool,
@@ -639,6 +670,7 @@ def _build_plot(
                 mode="markers",
                 name="Genome-wide results",
                 marker=genomewide_marker,
+                showlegend=False,
                 customdata=plot_df[["gene", "chromosome", "position", "effect_raw", "pvalue_raw"]].values,
                 hovertemplate=(
                     "Gene: %{customdata[0]}<br>"
@@ -649,6 +681,7 @@ def _build_plot(
                 ),
             )
         )
+        _add_legend_trace(fig, "Genome-wide results", genomewide_end, 8)
         if pvalue_scale:
             _add_colorbar_trace(fig, pvalue_scale, "Genome-wide results")
 
@@ -673,6 +706,7 @@ def _build_plot(
                 mode="markers",
                 name="Primary hits",
                 marker=primary_marker,
+                showlegend=False,
                 text=primary_df["gene"],
                 customdata=primary_df[["gene", "chromosome", "position", "effect_raw", "pvalue_raw"]].values,
                 hovertemplate=(
@@ -684,6 +718,7 @@ def _build_plot(
                 ),
             )
         )
+        _add_legend_trace(fig, "Primary hits", primary_end, 10, line={"color": "#ffffff", "width": 1})
         if primary_scale:
             _add_colorbar_trace(fig, primary_scale, "Primary hits")
 
@@ -709,6 +744,7 @@ def _build_plot(
                 mode="markers",
                 name="Secondary hits",
                 marker=secondary_marker,
+                showlegend=False,
                 text=secondary_df["gene"],
                 customdata=secondary_df[["gene", "chromosome", "position", "effect_raw", "pvalue_raw"]].values,
                 hovertemplate=(
@@ -719,6 +755,14 @@ def _build_plot(
                     "Plotted value: %{y:.4f}<extra></extra>"
                 ),
             )
+        )
+        _add_legend_trace(
+            fig,
+            "Secondary hits",
+            secondary_end,
+            11,
+            symbol="diamond",
+            line={"color": "#14532d", "width": 1.2},
         )
         if secondary_scale:
             _add_colorbar_trace(fig, secondary_scale, "Secondary hits")
@@ -834,7 +878,7 @@ async def api_plot(
     scale_mode: str = Form(default="linear"),
     genomewide_start_color: str = Form(default="#ffffff"),
     genomewide_end_color: str = Form(default="#ff0000"),
-    genomewide_saturation_pvalue: float = Form(default=1e-7),
+    genomewide_saturation_pvalue: float = Form(default=1e-2),
     primary_start_color: str = Form(default="#ffffff"),
     primary_end_color: str = Form(default="#5a00ff"),
     primary_saturation_pvalue: float = Form(default=1e-7),
@@ -902,11 +946,15 @@ async def api_plot(
         else _parse_gene_text_list(secondary_gene_text)
     )
 
-    missing_annotation = int(prepared.shape[0] - merged.shape[0])
     merged_gene_set = set(merged["gene"])
     primary_in_merged = {gene for gene in primary_genes if gene in merged_gene_set}
     secondary_in_merged = {gene for gene in secondary_genes if gene in merged_gene_set}
-    missing_secondary = sorted(secondary_genes - secondary_in_merged)
+    missing_secondary = _exclude_control_genes(secondary_genes - secondary_in_merged)
+    all_genes_list = sorted(prepared["gene"].tolist())
+    annotated_genes_list = sorted(merged["gene"].tolist())
+    missing_annotation_list = sorted(set(all_genes_list) - merged_gene_set)
+    primary_hits_list = sorted(primary_in_merged)
+    secondary_hits_list = sorted(secondary_in_merged)
 
     figure, pvalue_scale = _build_plot(
         data=merged,
@@ -927,11 +975,17 @@ async def api_plot(
     summary = {
         "all_genes_total": int(prepared.shape[0]),
         "annotated_genes_total": int(merged.shape[0]),
-        "missing_annotation_total": missing_annotation,
-        "primary_hits_total": len(primary_in_merged),
-        "secondary_hits_total": len(secondary_in_merged),
+        "missing_annotation_total": len(missing_annotation_list),
+        "primary_hits_total": len(primary_hits_list),
+        "secondary_hits_total": len(secondary_hits_list),
         "missing_secondary_total": len(missing_secondary),
         "missing_secondary_preview": missing_secondary[:20],
+        "all_genes_list": all_genes_list,
+        "annotated_genes_list": annotated_genes_list,
+        "missing_annotation_list": missing_annotation_list,
+        "primary_hits_list": primary_hits_list,
+        "secondary_hits_list": secondary_hits_list,
+        "missing_secondary_list": missing_secondary,
         "annotation_source": annotation_source,
         "scale_mode": "log2" if scale_mode == "log2" else "linear",
         "y_axis_label": str(merged["y_axis_label"].iloc[0]),

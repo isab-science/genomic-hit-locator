@@ -86,12 +86,12 @@
                   <option value="1e-10">1e-10</option>
                   <option value="1e-9">1e-9</option>
                   <option value="1e-8">1e-8</option>
-                  <option value="1e-7" selected>1e-7</option>
+                  <option value="1e-7">1e-7</option>
                   <option value="1e-6">1e-6</option>
                   <option value="1e-5">1e-5</option>
                   <option value="1e-4">1e-4</option>
                   <option value="1e-3">1e-3</option>
-                  <option value="1e-2">1e-2</option>
+                  <option value="1e-2" selected>1e-2</option>
                 </select>
               </label>
             </div>
@@ -451,29 +451,107 @@
       };
     }
 
+    function downloadGeneTable(filenameStem, genes) {
+      const normalizedGenes = [...new Set((genes || []).map((gene) => String(gene || "").trim()).filter(Boolean))];
+      if (!normalizedGenes.length) {
+        setStatus("There are no genes in this list to download.", "error");
+        return;
+      }
+      const rows = ["gene", ...normalizedGenes];
+      const csv = `${rows.join("\n")}\n`;
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `${filenameStem}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+    }
+
+    function createSummaryCard({ label, value, genes, filenameStem, preview = "", kind = "" }) {
+      const card = document.createElement("article");
+      card.className = `summary-card${kind ? ` ${kind}` : ""}`;
+
+      const title = document.createElement("span");
+      title.textContent = label;
+      card.appendChild(title);
+
+      const count = document.createElement("strong");
+      count.textContent = Number(value || 0).toLocaleString();
+      card.appendChild(count);
+
+      if (preview) {
+        const previewNode = document.createElement("small");
+        previewNode.textContent = preview;
+        card.appendChild(previewNode);
+      }
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button quiet summary-download";
+      button.textContent = "Download table";
+      button.disabled = !genes || genes.length === 0;
+      button.addEventListener("click", () => {
+        downloadGeneTable(filenameStem, genes || []);
+      });
+      card.appendChild(button);
+
+      return card;
+    }
+
     function renderSummary(summary) {
       const cards = [
-        ["Genome-wide genes", summary.all_genes_total],
-        ["Annotated genes", summary.annotated_genes_total],
-        ["Unannotated genes", summary.missing_annotation_total],
-        ["Primary hits", summary.primary_hits_total],
-        ["Secondary hits", summary.secondary_hits_total],
+        {
+          label: "Genome-wide genes",
+          value: summary.all_genes_total,
+          genes: summary.all_genes_list,
+          filenameStem: "genomic-hit-locator-genome-wide-genes",
+        },
+        {
+          label: "Annotated genes",
+          value: summary.annotated_genes_total,
+          genes: summary.annotated_genes_list,
+          filenameStem: "genomic-hit-locator-annotated-genes",
+        },
+        {
+          label: "Unannotated genes",
+          value: summary.missing_annotation_total,
+          genes: summary.missing_annotation_list,
+          filenameStem: "genomic-hit-locator-unannotated-genes",
+        },
+        {
+          label: "Primary hits",
+          value: summary.primary_hits_total,
+          genes: summary.primary_hits_list,
+          filenameStem: "genomic-hit-locator-primary-hits",
+        },
+        {
+          label: "Secondary hits",
+          value: summary.secondary_hits_total,
+          genes: summary.secondary_hits_list,
+          filenameStem: "genomic-hit-locator-secondary-hits",
+        },
       ];
 
       summaryGrid.innerHTML = "";
-      for (const [label, value] of cards) {
-        const card = document.createElement("article");
-        card.className = "summary-card";
-        card.innerHTML = `<span>${label}</span><strong>${Number(value).toLocaleString()}</strong>`;
-        summaryGrid.appendChild(card);
+      for (const cardConfig of cards) {
+        summaryGrid.appendChild(createSummaryCard(cardConfig));
       }
 
       if (summary.missing_secondary_total > 0) {
-        const card = document.createElement("article");
-        card.className = "summary-card warning";
         const preview = (summary.missing_secondary_preview || []).join(", ");
-        card.innerHTML = `<span>Secondary hits missing from tested set</span><strong>${summary.missing_secondary_total.toLocaleString()}</strong><small>${preview}</small>`;
-        summaryGrid.appendChild(card);
+        summaryGrid.appendChild(
+          createSummaryCard({
+            label: "Secondary hits missing from tested set",
+            value: summary.missing_secondary_total,
+            genes: summary.missing_secondary_list,
+            filenameStem: "genomic-hit-locator-missing-secondary-hits",
+            preview,
+            kind: "warning",
+          })
+        );
       }
 
       summaryGrid.hidden = false;
